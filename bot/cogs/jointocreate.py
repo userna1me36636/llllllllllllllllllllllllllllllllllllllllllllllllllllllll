@@ -16,12 +16,56 @@ class JoinToCreate(commands.Cog):
 
     @jtc.command(name="setup", description="Set a voice channel as a join-to-create template")
     @app_admin()
-    async def setup_template(self, interaction: discord.Interaction, channel: discord.VoiceChannel, name: str = "{user}'s room", user_limit: int = 0) -> None:
+    async def setup_template(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.VoiceChannel,
+        name: str = "{user}'s room",
+        user_limit: int = 0,
+        output_category: discord.CategoryChannel | None = None,
+    ) -> None:
         settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
         templates = settings.get("jtc_templates", {})
-        templates[str(channel.id)] = {"name": name, "user_limit": user_limit}
+        templates[str(channel.id)] = {
+            "name": name,
+            "user_limit": user_limit,
+            "category_id": output_category.id if output_category else None,
+        }
         await self.bot.db.set_settings_value(interaction.guild_id, "jtc_templates", templates, self.bot.settings.default_prefix)
         await interaction.response.send_message("Join-to-create template saved.", ephemeral=True)
+
+    @jtc.command(name="category", description="Set where temporary JTC voice channels are created")
+    @app_admin()
+    async def category(self, interaction: discord.Interaction, lobby: discord.VoiceChannel, output_category: discord.CategoryChannel) -> None:
+        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+        templates = settings.get("jtc_templates", {})
+        template = templates.setdefault(str(lobby.id), {"name": "{user}'s room", "user_limit": 0})
+        template["category_id"] = output_category.id
+        await self.bot.db.set_settings_value(interaction.guild_id, "jtc_templates", templates, self.bot.settings.default_prefix)
+        await interaction.response.send_message(f"Temporary channels from {lobby.mention} will be created in **{output_category.name}**.", ephemeral=True)
+
+    @jtc.command(name="config", description="Show current join-to-create setup")
+    @app_admin()
+    async def config(self, interaction: discord.Interaction) -> None:
+        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+        templates = settings.get("jtc_templates", {})
+        e = embed("JTC Config")
+        if not templates:
+            e.description = "Join-to-create is not configured yet."
+        for channel_id, template in templates.items():
+            lobby = interaction.guild.get_channel(int(channel_id))
+            category = interaction.guild.get_channel(template.get("category_id") or 0)
+            template_name = template.get("name", "{user}'s room")
+            e.add_field(
+                name=lobby.mention if lobby else f"Missing lobby `{channel_id}`",
+                value=(
+                    f"Name: `{template_name}`\n"
+                    f"User limit: `{template.get('user_limit', 0)}`\n"
+                    f"Output category: `{category.name if isinstance(category, discord.CategoryChannel) else 'Same as lobby'}`"
+                ),
+                inline=False,
+            )
+        await interaction.response.send_message(embed=e, ephemeral=True)
 
     @jtc.command(name="disable", description="Disable join-to-create")
     @app_admin()
@@ -61,9 +105,12 @@ class JoinToCreate(commands.Cog):
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             template = settings.get("jtc_templates", {}).get(str(after.channel.id))
             if template:
+                category = member.guild.get_channel(template.get("category_id") or 0)
+                if not isinstance(category, discord.CategoryChannel):
+                    category = after.channel.category
                 channel = await member.guild.create_voice_channel(
                     template.get("name", "{user}'s room").format(user=member.display_name)[:90],
-                    category=after.channel.category,
+                    category=category,
                     user_limit=int(template.get("user_limit", 0)),
                     reason="Join-to-create",
                 )
