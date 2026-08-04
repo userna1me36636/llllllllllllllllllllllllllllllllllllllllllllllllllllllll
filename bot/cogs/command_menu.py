@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin, configured_owner
+from bot.core.checks import app_admin
 from bot.core.utils import embed, parse_duration
 
 
@@ -21,11 +21,7 @@ class CommandMenu(commands.Cog):
     channel = app_commands.Group(name="channel", description="Channel tools")
     chatrevive = app_commands.Group(name="chatrevive", description="Revive quiet chats")
     logs = app_commands.Group(name="logs", description="Server logs")
-    ownerrole = app_commands.Group(
-        name="ownerrole",
-        description="Owner-only high role tools",
-        default_permissions=discord.Permissions(administrator=True),
-    )
+    ownerrole = app_commands.Group(name="ownerrole", description="OWNER_IDS only high role tools")
     reactionrole = app_commands.Group(name="reactionrole", description="Reaction roles")
     remind = app_commands.Group(name="remind", description="Personal reminders")
     role = app_commands.Group(name="role", description="Role tools")
@@ -155,7 +151,7 @@ class CommandMenu(commands.Cog):
     async def owner_role_allowed(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             return False
-        if await configured_owner(self.bot, interaction.user):
+        if interaction.user.id in getattr(self.bot.settings, "owner_ids", set()):
             return True
         await interaction.response.send_message("Only users listed in OWNER_IDS can use this command.", ephemeral=True)
         return False
@@ -263,7 +259,7 @@ class CommandMenu(commands.Cog):
     async def prefix_owner_role_allowed(self, ctx: commands.Context) -> bool:
         if ctx.guild is None or not isinstance(ctx.author, discord.Member):
             return False
-        if await configured_owner(self.bot, ctx.author):
+        if ctx.author.id in getattr(self.bot.settings, "owner_ids", set()):
             return True
         await ctx.reply("Only users listed in OWNER_IDS can use this command.", mention_author=False)
         return False
