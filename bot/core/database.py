@@ -155,12 +155,14 @@ class Database:
         row = await self.fetchrow("SELECT prefix, data FROM guild_settings WHERE guild_id=?", guild_id)
         if row is None:
             await self.execute(
-                "INSERT INTO guild_settings(guild_id, prefix, data) VALUES(?, ?, ?)",
+                "INSERT OR IGNORE INTO guild_settings(guild_id, prefix, data) VALUES(?, ?, ?)",
                 guild_id,
                 default_prefix,
                 "{}",
             )
-            return {"prefix": default_prefix}
+            row = await self.fetchrow("SELECT prefix, data FROM guild_settings WHERE guild_id=?", guild_id)
+            if row is None:
+                return {"prefix": default_prefix}
         data = json.loads(row["data"] or "{}")
         data["prefix"] = row["prefix"]
         return data

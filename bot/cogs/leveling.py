@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.core.checks import app_admin
 from bot.core.utils import embed, level_for_xp, xp_for_level
 
 
@@ -58,6 +59,53 @@ class Leveling(commands.Cog):
     async def toggle(self, interaction: discord.Interaction, enabled: bool) -> None:
         await self.bot.db.set_settings_value(interaction.guild_id, "levels_enabled", enabled, self.bot.settings.default_prefix)
         await interaction.response.send_message(f"Levels enabled: `{enabled}`", ephemeral=True)
+
+    @level.command(name="give_xp", description="Admin: give XP to a member")
+    @app_admin()
+    async def give_xp(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 1_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await self.bot.db.execute(
+            "INSERT INTO xp(guild_id,user_id,amount,last_message_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(guild_id,user_id) DO UPDATE SET amount=amount+excluded.amount,last_message_at=excluded.last_message_at",
+            interaction.guild_id,
+            member.id,
+            amount,
+            time.time(),
+        )
+        row = await self.bot.db.fetchrow("SELECT amount FROM xp WHERE guild_id=? AND user_id=?", interaction.guild_id, member.id)
+        total = row["amount"] if row else amount
+        await interaction.followup.send(f"Gave `{amount}` XP to {member.mention}. They now have `{total}` XP.", ephemeral=True)
+
+    @level.command(name="take_xp", description="Admin: remove XP from a member")
+    @app_admin()
+    async def take_xp(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 1_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        row = await self.bot.db.fetchrow("SELECT amount FROM xp WHERE guild_id=? AND user_id=?", interaction.guild_id, member.id)
+        current = row["amount"] if row else 0
+        total = max(0, current - amount)
+        await self.bot.db.execute(
+            "INSERT INTO xp(guild_id,user_id,amount,last_message_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(guild_id,user_id) DO UPDATE SET amount=excluded.amount,last_message_at=excluded.last_message_at",
+            interaction.guild_id,
+            member.id,
+            total,
+            time.time(),
+        )
+        await interaction.followup.send(f"Removed `{amount}` XP from {member.mention}. They now have `{total}` XP.", ephemeral=True)
+
+    @level.command(name="set_xp", description="Admin: set a member's XP")
+    @app_admin()
+    async def set_xp(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 0, 1_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await self.bot.db.execute(
+            "INSERT INTO xp(guild_id,user_id,amount,last_message_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(guild_id,user_id) DO UPDATE SET amount=excluded.amount,last_message_at=excluded.last_message_at",
+            interaction.guild_id,
+            member.id,
+            amount,
+            time.time(),
+        )
+        await interaction.followup.send(f"Set {member.mention}'s XP to `{amount}`.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

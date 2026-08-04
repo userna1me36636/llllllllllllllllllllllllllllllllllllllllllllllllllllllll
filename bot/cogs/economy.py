@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.core.checks import app_admin
 from bot.core.utils import embed
 
 
@@ -29,51 +30,57 @@ class Economy(commands.Cog):
 
     @economy.command(name="balance", description="Show balance")
     async def balance(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
+        await interaction.response.defer()
         member = member or interaction.user
         row = await self.account(interaction.guild_id, member.id)
-        await interaction.response.send_message(embed=embed("Balance", f"{member.mention}\nWallet: {row['wallet']}\nBank: {row['bank']}"))
+        await interaction.followup.send(embed=embed("Balance", f"{member.mention}\nWallet: {row['wallet']}\nBank: {row['bank']}"))
 
     @economy.command(name="daily", description="Claim daily coins")
     async def daily(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
         row = await self.account(interaction.guild_id, interaction.user.id)
         today = dt.date.today().isoformat()
         if row["last_daily"] == today:
-            await interaction.response.send_message("Daily already claimed.", ephemeral=True)
+            await interaction.followup.send("Daily already claimed.", ephemeral=True)
             return
         amount = random.randint(150, 300)
         await self.bot.db.execute("UPDATE economy SET wallet=wallet+?, last_daily=? WHERE guild_id=? AND user_id=?", amount, today, interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message(f"You claimed {amount} coins.", ephemeral=True)
+        await interaction.followup.send(f"You claimed {amount} coins.", ephemeral=True)
 
     @economy.command(name="weekly", description="Claim weekly coins")
     async def weekly(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
         row = await self.account(interaction.guild_id, interaction.user.id)
         week = f"{dt.date.today().isocalendar().year}-{dt.date.today().isocalendar().week}"
         if row["last_weekly"] == week:
-            await interaction.response.send_message("Weekly already claimed.", ephemeral=True)
+            await interaction.followup.send("Weekly already claimed.", ephemeral=True)
             return
         await self.bot.db.execute("UPDATE economy SET wallet=wallet+1000, last_weekly=? WHERE guild_id=? AND user_id=?", week, interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message("You claimed 1000 coins.", ephemeral=True)
+        await interaction.followup.send("You claimed 1000 coins.", ephemeral=True)
 
     @economy.command(name="work", description="Do a job for coins")
     async def work(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         amount = random.randint(40, 160)
         await self.account(interaction.guild_id, interaction.user.id)
         await self.bot.db.execute("UPDATE economy SET wallet=wallet+? WHERE guild_id=? AND user_id=?", amount, interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message(f"You worked and earned {amount} coins.")
+        await interaction.followup.send(f"You worked and earned {amount} coins.")
 
     @economy.command(name="deposit", description="Deposit coins")
     async def deposit(self, interaction: discord.Interaction, amount: int) -> None:
+        await interaction.response.defer(ephemeral=True)
         row = await self.account(interaction.guild_id, interaction.user.id)
         amount = min(max(0, amount), row["wallet"])
         await self.bot.db.execute("UPDATE economy SET wallet=wallet-?, bank=bank+? WHERE guild_id=? AND user_id=?", amount, amount, interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message(f"Deposited {amount}.", ephemeral=True)
+        await interaction.followup.send(f"Deposited {amount}.", ephemeral=True)
 
     @economy.command(name="withdraw", description="Withdraw coins")
     async def withdraw(self, interaction: discord.Interaction, amount: int) -> None:
+        await interaction.response.defer(ephemeral=True)
         row = await self.account(interaction.guild_id, interaction.user.id)
         amount = min(max(0, amount), row["bank"])
         await self.bot.db.execute("UPDATE economy SET bank=bank-?, wallet=wallet+? WHERE guild_id=? AND user_id=?", amount, amount, interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message(f"Withdrew {amount}.", ephemeral=True)
+        await interaction.followup.send(f"Withdrew {amount}.", ephemeral=True)
 
     @economy.command(name="shop", description="Show shop")
     async def shop(self, interaction: discord.Interaction) -> None:
@@ -81,18 +88,53 @@ class Economy(commands.Cog):
 
     @economy.command(name="buy", description="Buy a shop item")
     async def buy(self, interaction: discord.Interaction, item: str) -> None:
+        await interaction.response.defer(ephemeral=True)
         item = item.lower()
         if item not in SHOP:
-            await interaction.response.send_message("Item not found.", ephemeral=True)
+            await interaction.followup.send("Item not found.", ephemeral=True)
             return
         row = await self.account(interaction.guild_id, interaction.user.id)
         if row["wallet"] < SHOP[item]:
-            await interaction.response.send_message("Not enough coins.", ephemeral=True)
+            await interaction.followup.send("Not enough coins.", ephemeral=True)
             return
         inv = json.loads(row["inventory"])
         inv.append(item)
         await self.bot.db.execute("UPDATE economy SET wallet=wallet-?, inventory=? WHERE guild_id=? AND user_id=?", SHOP[item], json.dumps(inv), interaction.guild_id, interaction.user.id)
-        await interaction.response.send_message(f"Bought `{item}`.", ephemeral=True)
+        await interaction.followup.send(f"Bought `{item}`.", ephemeral=True)
+
+    @economy.command(name="give_coins", description="Admin: give wallet coins to a member")
+    @app_admin()
+    async def give_coins(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await self.account(interaction.guild_id, member.id)
+        await self.bot.db.execute("UPDATE economy SET wallet=wallet+? WHERE guild_id=? AND user_id=?", amount, interaction.guild_id, member.id)
+        row = await self.account(interaction.guild_id, member.id)
+        await interaction.followup.send(f"Gave `{amount}` coins to {member.mention}. Wallet: `{row['wallet']}`.", ephemeral=True)
+
+    @economy.command(name="take_coins", description="Admin: remove wallet coins from a member")
+    @app_admin()
+    async def take_coins(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        row = await self.account(interaction.guild_id, member.id)
+        total = max(0, row["wallet"] - amount)
+        await self.bot.db.execute("UPDATE economy SET wallet=? WHERE guild_id=? AND user_id=?", total, interaction.guild_id, member.id)
+        await interaction.followup.send(f"Removed `{amount}` coins from {member.mention}. Wallet: `{total}`.", ephemeral=True)
+
+    @economy.command(name="set_wallet", description="Admin: set a member's wallet coins")
+    @app_admin()
+    async def set_wallet(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 0, 100_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await self.account(interaction.guild_id, member.id)
+        await self.bot.db.execute("UPDATE economy SET wallet=? WHERE guild_id=? AND user_id=?", amount, interaction.guild_id, member.id)
+        await interaction.followup.send(f"Set {member.mention}'s wallet to `{amount}` coins.", ephemeral=True)
+
+    @economy.command(name="set_bank", description="Admin: set a member's bank coins")
+    @app_admin()
+    async def set_bank(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 0, 100_000_000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        await self.account(interaction.guild_id, member.id)
+        await self.bot.db.execute("UPDATE economy SET bank=? WHERE guild_id=? AND user_id=?", amount, interaction.guild_id, member.id)
+        await interaction.followup.send(f"Set {member.mention}'s bank to `{amount}` coins.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

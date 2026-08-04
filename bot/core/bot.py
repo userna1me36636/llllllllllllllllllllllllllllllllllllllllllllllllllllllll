@@ -63,6 +63,8 @@ class AllInOneBot(commands.Bot):
             case_insensitive=True,
         )
         self.settings = settings
+        if settings.owner_ids:
+            self.owner_ids = set(settings.owner_ids)
         self.db = Database(settings.database_url)
         self.started_at = discord.utils.utcnow()
         self.log = logging.getLogger("bot")
