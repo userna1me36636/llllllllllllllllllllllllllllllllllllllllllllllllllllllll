@@ -31,7 +31,6 @@ COGS: tuple[str, ...] = (
     "bot.cogs.event_logging",
     "bot.cogs.command_menu",
     "bot.cogs.server_backup",
-    "bot.cogs.companion_bots",
 )
 
 
@@ -45,9 +44,6 @@ async def dynamic_prefix(bot: "AllInOneBot", message: discord.Message) -> Iterab
         for prefix in command_prefixes:
             if prefix not in prefixes:
                 prefixes.append(prefix)
-    for special_prefix in ("-", "."):
-        if special_prefix not in prefixes:
-            prefixes.append(special_prefix)
     return commands.when_mentioned_or(*prefixes)(bot, message)
 
 
@@ -67,8 +63,6 @@ class AllInOneBot(commands.Bot):
             case_insensitive=True,
         )
         self.settings = settings
-        if settings.owner_ids:
-            self.owner_ids = set(settings.owner_ids)
         self.db = Database(settings.database_url)
         self.started_at = discord.utils.utcnow()
         self.log = logging.getLogger("bot")
@@ -80,14 +74,9 @@ class AllInOneBot(commands.Bot):
         settings = await self.db.get_settings(ctx.guild.id, self.settings.default_prefix)
         overrides = settings.get("command_prefix_overrides", {})
         allowed = overrides.get(ctx.command.qualified_name) or overrides.get(ctx.command.name)
-        root_name = ctx.command.root_parent.name if ctx.command.root_parent else ctx.command.name
-        if allowed:
-            return ctx.prefix in allowed
-        if ctx.prefix == "-" and root_name != "vc":
-            return False
-        if ctx.prefix == "." and root_name != "ggive":
-            return False
-        return True
+        if not allowed:
+            return True
+        return ctx.prefix in allowed
 
     async def setup_hook(self) -> None:
         await self.db.init()

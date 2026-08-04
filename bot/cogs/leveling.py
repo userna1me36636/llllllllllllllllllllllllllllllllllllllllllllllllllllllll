@@ -7,7 +7,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_has_guild_permissions
 from bot.core.utils import embed, level_for_xp, xp_for_level
 
 
@@ -55,7 +54,7 @@ class Leveling(commands.Cog):
         await interaction.response.send_message(embed=e)
 
     @level.command(name="toggle", description="Turn levels on or off")
-    @app_has_guild_permissions(manage_guild=True)
+    @app_commands.default_permissions(manage_guild=True)
     async def toggle(self, interaction: discord.Interaction, enabled: bool) -> None:
         await self.bot.db.set_settings_value(interaction.guild_id, "levels_enabled", enabled, self.bot.settings.default_prefix)
         await interaction.response.send_message(f"Levels enabled: `{enabled}`", ephemeral=True)

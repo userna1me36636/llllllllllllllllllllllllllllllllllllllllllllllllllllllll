@@ -31,13 +31,9 @@ class GuildPlayer:
         self.guild = guild
         self.queue: asyncio.Queue[Track] = asyncio.Queue()
         self.current: Track | None = None
-        self.previous: Track | None = None
-        self.history: list[Track] = []
         self.loop_one = False
         self.loop_queue = False
         self.volume = 0.6
-        self.panel_channel_id: int | None = None
-        self.panel_message_id: int | None = None
 
     async def resolve(self, query: str, requester_id: int) -> list[Track]:
         def run() -> dict:

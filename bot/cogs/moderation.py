@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_has_guild_permissions, configured_owner, has_guild_permissions
+from bot.core.checks import has_guild_permissions
 from bot.core.utils import embed, parse_duration
 
 
@@ -19,7 +19,7 @@ class Moderation(commands.Cog):
     async def protected(self, guild_id: int, target: discord.Member, actor: discord.Member) -> bool:
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
         gm = settings.get("godmode", {})
-        if actor.guild_permissions.administrator or actor.id == target.guild.owner_id or await configured_owner(self.bot, actor):
+        if actor.guild_permissions.administrator or actor.id == target.guild.owner_id:
             return False
         return target.id in gm.get("users", []) or any(role.id in gm.get("roles", []) for role in target.roles)
 
@@ -161,14 +161,14 @@ class Moderation(commands.Cog):
         await ctx.reply("Channel unlocked.", mention_author=False)
 
     @mod.command(name="ban", description="Ban a member")
-    @app_has_guild_permissions(ban_members=True)
+    @app_commands.default_permissions(ban_members=True)
     async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
         await member.ban(reason=reason)
         await self.case(interaction.guild_id, member.id, interaction.user.id, "ban", reason)
         await interaction.response.send_message(embed=embed("Banned", member.mention))
 
     @mod.command(name="kick", description="Kick a member")
-    @app_has_guild_permissions(kick_members=True)
+    @app_commands.default_permissions(kick_members=True)
     async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
         if await self.protected(interaction.guild_id, member, interaction.user):
             await interaction.response.send_message("That member is protected by God Mode.", ephemeral=True)
@@ -178,14 +178,14 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(embed=embed("Kicked", member.mention))
 
     @mod.command(name="purge", description="Delete recent messages")
-    @app_has_guild_permissions(manage_messages=True)
+    @app_commands.default_permissions(manage_messages=True)
     async def slash_purge(self, interaction: discord.Interaction, amount: app_commands.Range[int, 1, 1000]) -> None:
         await interaction.response.defer(ephemeral=True)
         deleted = await interaction.channel.purge(limit=amount, bulk=True)
         await interaction.followup.send(f"Deleted {len(deleted)} messages.", ephemeral=True)
 
     @mod.command(name="timeout", description="Timeout a member")
-    @app_has_guild_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def slash_timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason provided") -> None:
         if await self.protected(interaction.guild_id, member, interaction.user):
             await interaction.response.send_message("That member is protected by God Mode.", ephemeral=True)
@@ -196,21 +196,21 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(embed=embed("Timed Out", f"{member.mention} until {discord.utils.format_dt(until)}."))
 
     @mod.command(name="untimeout", description="Remove a member timeout")
-    @app_has_guild_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def slash_untimeout(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
         await member.timeout(None, reason=reason)
         await self.case(interaction.guild_id, member.id, interaction.user.id, "untimeout", reason)
         await interaction.response.send_message(embed=embed("Timeout Removed", member.mention))
 
     @mod.command(name="warn", description="Warn a member")
-    @app_has_guild_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def slash_warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
         warn_id = await self.bot.db.execute("INSERT INTO warnings(guild_id,user_id,moderator_id,reason) VALUES(?,?,?,?)", interaction.guild_id, member.id, interaction.user.id, reason)
         await self.case(interaction.guild_id, member.id, interaction.user.id, "warn", reason)
         await interaction.response.send_message(embed=embed("Warned", f"{member.mention} received warning `#{warn_id}`."))
 
     @mod.command(name="warnings", description="Show warnings for a member")
-    @app_has_guild_permissions(moderate_members=True)
+    @app_commands.default_permissions(moderate_members=True)
     async def slash_warnings(self, interaction: discord.Interaction, member: discord.Member) -> None:
         rows = await self.bot.db.fetchall("SELECT id, moderator_id, reason, created_at FROM warnings WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 10", interaction.guild_id, member.id)
         e = embed("Warning History", member.mention)

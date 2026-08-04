@@ -9,7 +9,6 @@ import qrcode
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_has_guild_permissions
 from bot.core.utils import embed, parse_duration, random_code
 
 
@@ -59,13 +58,13 @@ class Utility(commands.Cog):
         await interaction.response.send_message("Poll posted.", ephemeral=True)
 
     @utility.command(name="say", description="Make the bot say a message")
-    @app_has_guild_permissions(manage_messages=True)
+    @app_commands.default_permissions(manage_messages=True)
     async def say(self, interaction: discord.Interaction, message: str) -> None:
         await interaction.channel.send(message)
         await interaction.response.send_message("Sent.", ephemeral=True)
 
     @utility.command(name="embed", description="Send a simple embed")
-    @app_has_guild_permissions(manage_messages=True)
+    @app_commands.default_permissions(manage_messages=True)
     async def send_embed(self, interaction: discord.Interaction, title: str, description: str) -> None:
         await interaction.channel.send(embed=embed(title, description))
         await interaction.response.send_message("Embed sent.", ephemeral=True)

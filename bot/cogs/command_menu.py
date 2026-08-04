@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import time
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin, app_has_guild_permissions, configured_owner
+from bot.core.checks import app_admin
 from bot.core.utils import embed, parse_duration
 
 
@@ -17,17 +16,11 @@ class CommandMenu(commands.Cog):
         self.bot = bot
         self.reaction_roles: dict[tuple[int, int, str], int] = {}
         self.vc_owners: dict[int, int] = {}
-        self.voice_joined_at: dict[tuple[int, int], float] = {}
 
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
     channel = app_commands.Group(name="channel", description="Channel tools")
     chatrevive = app_commands.Group(name="chatrevive", description="Revive quiet chats")
     logs = app_commands.Group(name="logs", description="Server logs")
-    ownerrole = app_commands.Group(
-        name="ownerrole",
-        description="Owner-only high role tools",
-        default_permissions=discord.Permissions(administrator=True),
-    )
     reactionrole = app_commands.Group(name="reactionrole", description="Reaction roles")
     remind = app_commands.Group(name="remind", description="Personal reminders")
     role = app_commands.Group(name="role", description="Role tools")
@@ -72,19 +65,19 @@ class CommandMenu(commands.Cog):
         await interaction.response.send_message("Autorole turned off.", ephemeral=True)
 
     @channel.command(name="lock", description="Lock the current text channel")
-    @app_has_guild_permissions(manage_channels=True)
+    @app_commands.default_permissions(manage_channels=True)
     async def channel_lock(self, interaction: discord.Interaction) -> None:
         await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
         await interaction.response.send_message("Channel locked.", ephemeral=True)
 
     @channel.command(name="unlock", description="Unlock the current text channel")
-    @app_has_guild_permissions(manage_channels=True)
+    @app_commands.default_permissions(manage_channels=True)
     async def channel_unlock(self, interaction: discord.Interaction) -> None:
         await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=None)
         await interaction.response.send_message("Channel unlocked.", ephemeral=True)
 
     @channel.command(name="slowmode", description="Set channel slowmode seconds")
-    @app_has_guild_permissions(manage_channels=True)
+    @app_commands.default_permissions(manage_channels=True)
     async def channel_slowmode(self, interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]) -> None:
         await interaction.channel.edit(slowmode_delay=seconds)
         await interaction.response.send_message(f"Slowmode set to {seconds}s.", ephemeral=True)
@@ -143,227 +136,22 @@ class CommandMenu(commands.Cog):
         await interaction.response.send_message("That reminder was cleared if it was active.", ephemeral=True)
 
     @role.command(name="add", description="Add a role to a member")
-    @app_has_guild_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def role_add(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
         await member.add_roles(role, reason=f"Role add by {interaction.user}")
         await interaction.response.send_message(f"Added {role.mention} to {member.mention}.", ephemeral=True)
 
     @role.command(name="remove", description="Remove a role from a member")
-    @app_has_guild_permissions(manage_roles=True)
+    @app_commands.default_permissions(manage_roles=True)
     async def role_remove(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
         await member.remove_roles(role, reason=f"Role remove by {interaction.user}")
         await interaction.response.send_message(f"Removed {role.mention} from {member.mention}.", ephemeral=True)
-
-    async def owner_role_allowed(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-            return False
-        if await configured_owner(self.bot, interaction.user):
-            return True
-        await interaction.response.send_message("Only users listed in OWNER_IDS can use this command.", ephemeral=True)
-        return False
-
-    async def bot_can_manage_role(self, interaction: discord.Interaction, role: discord.Role) -> bool:
-        me = interaction.guild.me if interaction.guild else None
-        if me is None:
-            await interaction.response.send_message("I could not check my bot role.", ephemeral=True)
-            return False
-        if role.is_default() or role.managed:
-            await interaction.response.send_message("I cannot manage that role.", ephemeral=True)
-            return False
-        if role >= me.top_role:
-            await interaction.response.send_message("I cannot touch that role because it is higher than, or equal to, my highest bot role. Move my bot role above it first.", ephemeral=True)
-            return False
-        return True
-
-    @ownerrole.command(name="add", description="OWNER_IDS only: add a role using the bot's role height")
-    async def ownerrole_add(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        await member.add_roles(role, reason=f"Owner role add by {interaction.user}")
-        await interaction.response.send_message(f"Added {role.mention} to {member.mention}.", ephemeral=True)
-
-    @ownerrole.command(name="remove", description="OWNER_IDS only: remove a role using the bot's role height")
-    async def ownerrole_remove(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        await member.remove_roles(role, reason=f"Owner role remove by {interaction.user}")
-        await interaction.response.send_message(f"Removed {role.mention} from {member.mention}.", ephemeral=True)
-
-    @ownerrole.command(name="move_above", description="OWNER_IDS only: move a role above another role")
-    async def ownerrole_move_above(self, interaction: discord.Interaction, role: discord.Role, above_role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        if not await self.bot_can_manage_role(interaction, above_role):
-            return
-        max_position = interaction.guild.me.top_role.position - 1
-        position = min(above_role.position + 1, max_position)
-        await role.edit(position=position, reason=f"Owner role move by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} above {above_role.mention}.", ephemeral=True)
-
-    @ownerrole.command(name="move_below", description="OWNER_IDS only: move a role below another role")
-    async def ownerrole_move_below(self, interaction: discord.Interaction, role: discord.Role, below_role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        if not await self.bot_can_manage_role(interaction, below_role):
-            return
-        await role.edit(position=below_role.position, reason=f"Owner role move by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} below {below_role.mention}.", ephemeral=True)
-
-    @ownerrole.command(name="move_top", description="OWNER_IDS only: move a role as high as the bot can")
-    async def ownerrole_move_top(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        position = interaction.guild.me.top_role.position - 1
-        await role.edit(position=position, reason=f"Owner role move top by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} as high as I can place it.", ephemeral=True)
-
-    async def set_role_admin(self, interaction: discord.Interaction, role: discord.Role, enabled: bool) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        permissions = role.permissions
-        if permissions.administrator == enabled:
-            state = "already has" if enabled else "already does not have"
-            await interaction.response.send_message(f"{role.mention} {state} Administrator.", ephemeral=True)
-            return
-        permissions.administrator = enabled
-        await role.edit(permissions=permissions, reason=f"Owner role admin {'enabled' if enabled else 'disabled'} by {interaction.user}")
-        state = "gave Administrator to" if enabled else "removed Administrator from"
-        await interaction.response.send_message(f"I {state} {role.mention}.", ephemeral=True)
-
-    @ownerrole.command(name="admin_on", description="OWNER_IDS only: give Administrator to a role")
-    async def ownerrole_admin_on(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        await self.set_role_admin(interaction, role, True)
-
-    @ownerrole.command(name="admin_off", description="OWNER_IDS only: remove Administrator from a role")
-    async def ownerrole_admin_off(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        await self.set_role_admin(interaction, role, False)
-
-    @ownerrole.command(name="admin_toggle", description="OWNER_IDS only: toggle Administrator on a role")
-    async def ownerrole_admin_toggle(self, interaction: discord.Interaction, role: discord.Role) -> None:
-        if not await self.owner_role_allowed(interaction):
-            return
-        if not await self.bot_can_manage_role(interaction, role):
-            return
-        permissions = role.permissions
-        permissions.administrator = not permissions.administrator
-        await role.edit(permissions=permissions, reason=f"Owner role admin toggled by {interaction.user}")
-        state = "on" if permissions.administrator else "off"
-        await interaction.response.send_message(f"Administrator is now `{state}` for {role.mention}.", ephemeral=True)
-
-    async def prefix_owner_role_allowed(self, ctx: commands.Context) -> bool:
-        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
-            return False
-        if await configured_owner(self.bot, ctx.author):
-            return True
-        await ctx.reply("Only users listed in OWNER_IDS can use this command.", mention_author=False)
-        return False
-
-    async def prefix_bot_can_manage_role(self, ctx: commands.Context, role: discord.Role) -> bool:
-        me = ctx.guild.me if ctx.guild else None
-        if me is None:
-            await ctx.reply("I could not check my bot role.", mention_author=False)
-            return False
-        if role.is_default() or role.managed:
-            await ctx.reply("I cannot manage that role.", mention_author=False)
-            return False
-        if role >= me.top_role:
-            await ctx.reply("I cannot touch that role because it is higher than, or equal to, my highest bot role. Move my bot role above it first.", mention_author=False)
-            return False
-        return True
-
-    @commands.group(name="ownerrole", aliases=["orole"], hidden=True, invoke_without_command=True)
-    async def ownerrole_prefix(self, ctx: commands.Context) -> None:
-        if not await self.prefix_owner_role_allowed(ctx):
-            return
-        await ctx.reply("Use `ownerrole add @member @role`, `ownerrole remove @member @role`, `ownerrole move_top @role`, `ownerrole move_above @role @otherrole`, `ownerrole move_below @role @otherrole`, or the admin commands.", mention_author=False)
-
-    @ownerrole_prefix.command(name="add")
-    async def ownerrole_prefix_add(self, ctx: commands.Context, member: discord.Member, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        await member.add_roles(role, reason=f"Owner role add by {ctx.author}")
-        await ctx.reply(f"Added {role.mention} to {member.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="remove")
-    async def ownerrole_prefix_remove(self, ctx: commands.Context, member: discord.Member, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        await member.remove_roles(role, reason=f"Owner role remove by {ctx.author}")
-        await ctx.reply(f"Removed {role.mention} from {member.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="move_above", aliases=["moveabove"])
-    async def ownerrole_prefix_move_above(self, ctx: commands.Context, role: discord.Role, above_role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx):
-            return
-        if not await self.prefix_bot_can_manage_role(ctx, role) or not await self.prefix_bot_can_manage_role(ctx, above_role):
-            return
-        max_position = ctx.guild.me.top_role.position - 1
-        position = min(above_role.position + 1, max_position)
-        await role.edit(position=position, reason=f"Owner role move by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} above {above_role.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="move_below", aliases=["movebelow"])
-    async def ownerrole_prefix_move_below(self, ctx: commands.Context, role: discord.Role, below_role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx):
-            return
-        if not await self.prefix_bot_can_manage_role(ctx, role) or not await self.prefix_bot_can_manage_role(ctx, below_role):
-            return
-        await role.edit(position=below_role.position, reason=f"Owner role move by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} below {below_role.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="move_top", aliases=["movetop"])
-    async def ownerrole_prefix_move_top(self, ctx: commands.Context, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        position = ctx.guild.me.top_role.position - 1
-        await role.edit(position=position, reason=f"Owner role move top by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} as high as I can place it.", mention_author=False)
-
-    @ownerrole_prefix.command(name="admin_on", aliases=["adminon"])
-    async def ownerrole_prefix_admin_on(self, ctx: commands.Context, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        permissions = role.permissions
-        permissions.administrator = True
-        await role.edit(permissions=permissions, reason=f"Owner role admin enabled by {ctx.author}")
-        await ctx.reply(f"I gave Administrator to {role.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="admin_off", aliases=["adminoff"])
-    async def ownerrole_prefix_admin_off(self, ctx: commands.Context, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        permissions = role.permissions
-        permissions.administrator = False
-        await role.edit(permissions=permissions, reason=f"Owner role admin disabled by {ctx.author}")
-        await ctx.reply(f"I removed Administrator from {role.mention}.", mention_author=False)
-
-    @ownerrole_prefix.command(name="admin_toggle", aliases=["admintoggle"])
-    async def ownerrole_prefix_admin_toggle(self, ctx: commands.Context, role: discord.Role) -> None:
-        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
-            return
-        permissions = role.permissions
-        permissions.administrator = not permissions.administrator
-        await role.edit(permissions=permissions, reason=f"Owner role admin toggled by {ctx.author}")
-        state = "on" if permissions.administrator else "off"
-        await ctx.reply(f"Administrator is now `{state}` for {role.mention}.", mention_author=False)
 
     def owned_channel(self, member: discord.Member) -> discord.VoiceChannel | None:
         if member.voice and isinstance(member.voice.channel, discord.VoiceChannel):
             channel = member.voice.channel
             owner = self.vc_owners.get(channel.id)
-            if owner in {None, member.id} or member.guild_permissions.manage_channels or member.id in self.bot.settings.owner_ids:
+            if owner in {None, member.id} or member.guild_permissions.manage_channels:
                 return channel
         return None
 
@@ -375,134 +163,6 @@ class CommandMenu(commands.Cog):
             return
         self.vc_owners[member.voice.channel.id] = member.id
         await interaction.response.send_message("You now own this voice channel.", ephemeral=True)
-
-    async def settings(self, guild_id: int) -> dict:
-        return await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
-
-    async def is_trusted(self, member: discord.Member) -> bool:
-        if member.guild_permissions.administrator or member.id == member.guild.owner_id or await configured_owner(self.bot, member):
-            return True
-        settings = await self.settings(member.guild.id)
-        anti = settings.get("antinuke_whitelist", [])
-        if member.id in anti or any(role.id in anti for role in member.roles):
-            return True
-        role = discord.utils.get(member.roles, name="fren whitelist")
-        return role is not None
-
-    async def ensure_fren_role(self, guild: discord.Guild) -> discord.Role:
-        role = discord.utils.get(guild.roles, name="fren whitelist")
-        if role is None:
-            role = await guild.create_role(name="fren whitelist", reason="Fren whitelist role created")
-        return role
-
-    async def add_vc_time(self, guild_id: int, user_id: int, seconds: int) -> None:
-        if seconds <= 0:
-            return
-        settings = await self.settings(guild_id)
-        stats = settings.get("vc_stats", {})
-        stats[str(user_id)] = int(stats.get(str(user_id), 0)) + seconds
-        await self.bot.db.set_settings_value(guild_id, "vc_stats", stats, self.bot.settings.default_prefix)
-
-    async def recent_role_actor(self, guild: discord.Guild, target_id: int) -> discord.Member | None:
-        try:
-            async for entry in guild.audit_logs(limit=6, action=discord.AuditLogAction.member_role_update):
-                if (discord.utils.utcnow() - entry.created_at).total_seconds() > 12:
-                    continue
-                if getattr(entry.target, "id", None) == target_id and entry.user:
-                    return guild.get_member(entry.user.id)
-        except discord.Forbidden:
-            return None
-        return None
-
-    async def stfu_target_for(self, guild_id: int, user_id: int) -> int | None:
-        settings = await self.settings(guild_id)
-        active = settings.get("vc_stfu", {})
-        for actor_id, target_id in active.items():
-            if int(target_id) == user_id:
-                return int(actor_id)
-        return None
-
-    @vc.command(name="leaderboard", description="Show the VC time leaderboard")
-    async def vc_leaderboard(self, interaction: discord.Interaction) -> None:
-        settings = await self.settings(interaction.guild_id)
-        stats = settings.get("vc_stats", {})
-        rows = sorted(((int(uid), int(seconds)) for uid, seconds in stats.items()), key=lambda item: item[1], reverse=True)[:10]
-        e = embed("VC Leaderboard")
-        for index, (user_id, seconds) in enumerate(rows, start=1):
-            hours, rem = divmod(seconds, 3600)
-            minutes = rem // 60
-            e.add_field(name=f"#{index}", value=f"<@{user_id}> - {hours}h {minutes}m", inline=False)
-        if not rows:
-            e.description = "No VC time tracked yet."
-        await interaction.response.send_message(embed=e)
-
-    @commands.group(name="vc", invoke_without_command=True)
-    async def vc_prefix(self, ctx: commands.Context) -> None:
-        await ctx.reply("Use `-vc leaderboard` or `-vc stfu @user`.", mention_author=False)
-
-    @vc_prefix.command(name="leaderboard", aliases=["lb", "top"])
-    async def vc_prefix_leaderboard(self, ctx: commands.Context) -> None:
-        settings = await self.settings(ctx.guild.id)
-        stats = settings.get("vc_stats", {})
-        rows = sorted(((int(uid), int(seconds)) for uid, seconds in stats.items()), key=lambda item: item[1], reverse=True)[:10]
-        e = embed("VC Leaderboard")
-        for index, (user_id, seconds) in enumerate(rows, start=1):
-            hours, rem = divmod(seconds, 3600)
-            minutes = rem // 60
-            e.add_field(name=f"#{index}", value=f"<@{user_id}> - {hours}h {minutes}m", inline=False)
-        if not rows:
-            e.description = "No VC time tracked yet."
-        await ctx.reply(embed=e, mention_author=False)
-
-    @vc_prefix.command(name="stfu")
-    async def vc_stfu(self, ctx: commands.Context, member: discord.Member) -> None:
-        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
-            return
-        if not await self.is_trusted(ctx.author):
-            await ctx.reply("Only admins, anti-nuke whitelisted users, or fren whitelist users can use this.", mention_author=False)
-            return
-        settings = await self.settings(ctx.guild.id)
-        active = settings.get("vc_stfu", {})
-        actor_key = str(ctx.author.id)
-        existing_actor_key = next((key for key, target_id in active.items() if int(target_id) == member.id), None)
-        if existing_actor_key is not None:
-            active.pop(existing_actor_key)
-            await self.bot.db.set_settings_value(ctx.guild.id, "vc_stfu", active, self.bot.settings.default_prefix)
-            try:
-                await member.edit(mute=False, reason=f"STFU disabled by {ctx.author}")
-            except discord.HTTPException:
-                pass
-            await ctx.reply(f"Stopped STFU mute lock on {member.mention}.", mention_author=False)
-            return
-        if actor_key in active:
-            await ctx.reply("You already have one STFU target. Turn it off before targeting someone else.", mention_author=False)
-            return
-        active[actor_key] = member.id
-        await self.bot.db.set_settings_value(ctx.guild.id, "vc_stfu", active, self.bot.settings.default_prefix)
-        if member.voice:
-            try:
-                await member.edit(mute=True, reason=f"STFU enabled by {ctx.author}")
-            except discord.HTTPException:
-                pass
-        await ctx.reply(f"STFU mute lock enabled on {member.mention}. Run the command again to stop.", mention_author=False)
-
-    @commands.command(name="ggive")
-    async def ggive(self, ctx: commands.Context, member: discord.Member, item: str) -> None:
-        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
-            return
-        if item.lower() not in {"fw", "frwhitelist", "frenwhitelist"}:
-            await ctx.reply("Use `.ggive @user fw`.", mention_author=False)
-            return
-        if not await self.is_trusted(ctx.author):
-            await ctx.reply("Only admins, anti-nuke whitelisted users, or fren whitelist users can give this.", mention_author=False)
-            return
-        role = await self.ensure_fren_role(ctx.guild)
-        await member.add_roles(role, reason=f"Fren whitelist given by {ctx.author}")
-        settings = await self.settings(ctx.guild.id)
-        grants = settings.get("fr_whitelist_grants", {})
-        grants[str(member.id)] = ctx.author.id
-        await self.bot.db.set_settings_value(ctx.guild.id, "fr_whitelist_grants", grants, self.bot.settings.default_prefix)
-        await ctx.reply(f"Gave {member.mention} the `{role.name}` role.", mention_author=False)
 
     @vc.command(name="rename", description="Rename your temporary voice channel")
     async def vc_rename(self, interaction: discord.Interaction, name: str) -> None:
@@ -564,10 +224,6 @@ class CommandMenu(commands.Cog):
 
     @vc.command(name="reject", description="Block a member from your temporary voice channel")
     async def vc_reject(self, interaction: discord.Interaction, member: discord.Member) -> None:
-        godmode = self.bot.get_cog("GodMode")
-        if godmode and await godmode.is_protected(member) and not await godmode.actor_has_override(interaction.user, interaction.guild):
-            await interaction.response.send_message("That member is protected by God Mode. Only admins can reject them.", ephemeral=True)
-            return
         channel = self.owned_channel(interaction.user)
         if channel:
             await channel.set_permissions(member, connect=False)
@@ -628,48 +284,6 @@ class CommandMenu(commands.Cog):
         role = guild.get_role(role_id) if role_id else None
         if member and role:
             await member.remove_roles(role, reason="Reaction role")
-
-    @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
-        key = (member.guild.id, member.id)
-        now = time.time()
-        if before.channel is None and after.channel is not None:
-            self.voice_joined_at[key] = now
-        elif before.channel is not None and after.channel is None:
-            started = self.voice_joined_at.pop(key, None)
-            if started:
-                await self.add_vc_time(member.guild.id, member.id, int(now - started))
-        elif before.channel is not None and after.channel is not None and before.channel.id != after.channel.id:
-            started = self.voice_joined_at.get(key)
-            if started:
-                await self.add_vc_time(member.guild.id, member.id, int(now - started))
-            self.voice_joined_at[key] = now
-
-        actor_id = await self.stfu_target_for(member.guild.id, member.id)
-        if actor_id and after.channel is not None and not after.mute:
-            try:
-                await member.edit(mute=True, reason=f"STFU mute lock active by {actor_id}")
-            except discord.HTTPException:
-                pass
-
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        role = discord.utils.get(after.guild.roles, name="fren whitelist")
-        if role is None or role in after.roles or role not in before.roles:
-            return
-        settings = await self.settings(after.guild.id)
-        grants = settings.get("fr_whitelist_grants", {})
-        giver_id = int(grants.get(str(after.id), 0))
-        actor = await self.recent_role_actor(after.guild, after.id)
-        allowed = False
-        if actor:
-            allowed = actor.guild_permissions.administrator or actor.id == giver_id or await self.is_trusted(actor)
-        if allowed:
-            return
-        try:
-            await after.add_roles(role, reason="Fren whitelist protection: unauthorized removal blocked")
-        except discord.HTTPException:
-            pass
 
 
 async def setup(bot: commands.Bot) -> None:

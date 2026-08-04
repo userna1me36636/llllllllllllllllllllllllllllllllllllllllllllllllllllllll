@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin, configured_owner, has_guild_permissions
+from bot.core.checks import app_admin, has_guild_permissions
 from bot.core.utils import embed
 
 
@@ -17,8 +17,7 @@ def prefix_command_names(bot: commands.Bot) -> list[str]:
             continue
         if command.name not in names:
             names.append(command.name)
-    priority = ["join", "musicpanel", "wizzpro", "godmode", "prefix", "help"]
-    return [name for name in priority if name in names] + sorted(name for name in names if name not in priority)
+    return sorted(names)
 
 
 class PrefixModal(discord.ui.Modal):
@@ -60,7 +59,7 @@ class PrefixPanel(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             return False
-        allowed = interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator or await configured_owner(interaction.client, interaction.user)
+        allowed = interaction.user.guild_permissions.manage_guild or interaction.user.guild_permissions.administrator or await interaction.client.is_owner(interaction.user)
         if not allowed:
             await interaction.response.send_message("You need Manage Server to use this panel.", ephemeral=True)
         return allowed
@@ -105,51 +104,6 @@ class Admin(commands.Cog):
             return
         await self.bot.db.set_prefix(ctx.guild.id, new_prefix[:12], self.bot.settings.default_prefix)
         await ctx.reply(f"Prefix changed to `{new_prefix[:12]}`.", mention_author=False)
-
-    @commands.command(name="wizzpro", aliases=["wizzpeo", "wizpro", "willpro"])
-    @has_guild_permissions(administrator=True)
-    async def wizzpro(self, ctx: commands.Context) -> None:
-        """Emergency toggle that removes/restores Administrator and Ban Members from roles."""
-        if ctx.guild is None or ctx.guild.me is None:
-            return
-        settings = await self.bot.db.get_settings(ctx.guild.id, self.bot.settings.default_prefix)
-        state = settings.get("wizzpro", {"active": False, "roles": {}})
-        if state.get("active"):
-            restored = 0
-            for role_id, permissions_value in state.get("roles", {}).items():
-                role = ctx.guild.get_role(int(role_id))
-                if role is None or role.managed or role >= ctx.guild.me.top_role:
-                    continue
-                try:
-                    await role.edit(permissions=discord.Permissions(int(permissions_value)), reason=f"WizzPro restored by {ctx.author}")
-                    restored += 1
-                except discord.HTTPException:
-                    continue
-            await self.bot.db.set_settings_value(ctx.guild.id, "wizzpro", {"active": False, "roles": {}}, self.bot.settings.default_prefix)
-            await ctx.reply(f"WizzPro disabled. Restored {restored} role(s).", mention_author=False)
-            return
-
-        snapshots: dict[str, int] = {}
-        changed = 0
-        for role in ctx.guild.roles:
-            if role == ctx.guild.default_role or role.managed or role >= ctx.guild.me.top_role:
-                continue
-            perms = role.permissions
-            if not perms.administrator and not perms.ban_members:
-                continue
-            snapshots[str(role.id)] = perms.value
-            perms.administrator = False
-            perms.ban_members = False
-            try:
-                await role.edit(permissions=perms, reason=f"WizzPro enabled by {ctx.author}")
-                changed += 1
-            except discord.HTTPException:
-                continue
-        await self.bot.db.set_settings_value(ctx.guild.id, "wizzpro", {"active": True, "roles": snapshots}, self.bot.settings.default_prefix)
-        await ctx.reply(
-            f"WizzPro enabled. Removed Administrator/Ban Members from {changed} role(s). Run the command again to restore them.",
-            mention_author=False,
-        )
 
     @prefix.command(name="set", description="Set the prefix for this server")
     @app_admin()

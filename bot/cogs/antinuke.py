@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin, configured_owner
+from bot.core.checks import app_admin
 from bot.core.utils import embed
 
 
@@ -149,7 +149,7 @@ class AntiNukePanel(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             return False
-        allowed = interaction.user.guild_permissions.administrator or await configured_owner(interaction.client, interaction.user)
+        allowed = interaction.user.guild_permissions.administrator or await interaction.client.is_owner(interaction.user)
         if not allowed:
             await interaction.response.send_message("Only admins can use this panel.", ephemeral=True)
         return allowed
@@ -205,7 +205,6 @@ class AntiNuke(commands.Cog):
         return {
             "enabled": True,
             "dm_owner": True,
-            "ban_lockdown": True,
             "rules": {event: default_rule(event) for event in PROTECTIONS},
             "whitelist": [],
             "recent_actions": [],
@@ -216,7 +215,6 @@ class AntiNuke(commands.Cog):
         old_rules = settings.get("antinuke", {})
         config = settings.get("antinuke_v2") or self.default_config()
         config["enabled"] = settings.get("antinuke_enabled", config.get("enabled", True))
-        config.setdefault("ban_lockdown", True)
         config.setdefault("rules", {})
         config.setdefault("whitelist", settings.get("antinuke_whitelist", []))
         config.setdefault("recent_actions", [])
@@ -239,7 +237,6 @@ class AntiNuke(commands.Cog):
         e.add_field(name="System", value="Enabled" if config.get("enabled", True) else "Disabled", inline=True)
         e.add_field(name="Active Protections", value=f"{active}/{len(PROTECTIONS)}", inline=True)
         e.add_field(name="Whitelisted IDs", value=str(len(config.get("whitelist", []))), inline=True)
-        e.add_field(name="Ban Lockdown", value="Enabled" if config.get("ban_lockdown", True) else "Disabled", inline=True)
         e.add_field(
             name=f"Editing: {PROTECTIONS[selected]['label']}",
             value=(
@@ -333,14 +330,6 @@ class AntiNuke(commands.Cog):
         await self.save_config(interaction.guild_id, config)
         await interaction.response.send_message("Whitelist updated.", ephemeral=True)
 
-    @antinuke.command(name="banlock", description="Only allow non-whitelisted users to ban through bot commands")
-    @app_admin()
-    async def banlock(self, interaction: discord.Interaction, enabled: bool) -> None:
-        config = await self.get_config(interaction.guild_id)
-        config["ban_lockdown"] = enabled
-        await self.save_config(interaction.guild_id, config)
-        await interaction.response.send_message(f"Ban lockdown set to `{enabled}`.", ephemeral=True)
-
     async def actor_from_audit(self, guild: discord.Guild, action: discord.AuditLogAction) -> discord.Member | None:
         async for entry in guild.audit_logs(limit=3, action=action):
             if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
@@ -348,17 +337,6 @@ class AntiNuke(commands.Cog):
             if entry.user:
                 return guild.get_member(entry.user.id)
         return None
-
-    async def ban_actor_from_audit(self, guild: discord.Guild, user_id: int) -> discord.Member | None:
-        async for entry in guild.audit_logs(limit=6, action=discord.AuditLogAction.ban):
-            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
-                continue
-            if getattr(entry.target, "id", None) == user_id and entry.user:
-                return guild.get_member(entry.user.id)
-        return None
-
-    def whitelisted(self, actor: discord.Member, config: dict[str, Any]) -> bool:
-        return actor.id in config["whitelist"] or any(role.id in config["whitelist"] for role in actor.roles)
 
     async def record(self, guild: discord.Guild, event: str) -> None:
         config = await self.get_config(guild.id)
@@ -368,7 +346,7 @@ class AntiNuke(commands.Cog):
         actor = await self.actor_from_audit(guild, action)
         if actor is None or actor.id == guild.owner_id or actor.id == self.bot.user.id:
             return
-        if self.whitelisted(actor, config):
+        if actor.id in config["whitelist"] or any(role.id in config["whitelist"] for role in actor.roles):
             return
         rule = config["rules"].get(event, default_rule(event))
         if not rule.get("enabled", True):
@@ -454,16 +432,6 @@ class AntiNuke(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
-        config = await self.get_config(guild.id)
-        actor = await self.ban_actor_from_audit(guild, user.id)
-        if actor and config.get("ban_lockdown", True) and actor.id not in {guild.owner_id, self.bot.user.id} and not self.whitelisted(actor, config):
-            try:
-                await guild.unban(user, reason="Ban lockdown: use bot ban command or whitelist the moderator")
-            except discord.HTTPException:
-                pass
-            rule = config["rules"].get("ban_spam", default_rule("ban_spam"))
-            await self.punish(actor, rule, "unauthorized_ban", config)
-            return
         await self.record(guild, "ban_spam")
 
     @commands.Cog.listener()

@@ -24,12 +24,6 @@ def _ids(value: str | None) -> set[int]:
     return {int(part.strip()) for part in value.split(",") if part.strip().isdigit()}
 
 
-def _tokens(value: str | None) -> list[str]:
-    if not value:
-        return []
-    return [part.strip() for part in value.split(",") if part.strip()][:20]
-
-
 @dataclass(slots=True)
 class Settings:
     discord_token: str
@@ -47,7 +41,6 @@ class Settings:
     openai_api_key: str | None
     backup_webhook_url: str | None
     auto_sync_commands: bool
-    companion_bot_tokens: list[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,5 +66,4 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             backup_webhook_url=os.getenv("BACKUP_WEBHOOK_URL") or None,
             auto_sync_commands=_bool(os.getenv("AUTO_SYNC_COMMANDS"), False),
-            companion_bot_tokens=_tokens(os.getenv("COMPANION_BOT_TOKENS")),
         )
