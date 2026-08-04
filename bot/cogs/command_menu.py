@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, app_has_guild_permissions, configured_owner
 from bot.core.utils import embed, parse_duration
 
 
@@ -67,19 +67,19 @@ class CommandMenu(commands.Cog):
         await interaction.response.send_message("Autorole turned off.", ephemeral=True)
 
     @channel.command(name="lock", description="Lock the current text channel")
-    @app_commands.default_permissions(manage_channels=True)
+    @app_has_guild_permissions(manage_channels=True)
     async def channel_lock(self, interaction: discord.Interaction) -> None:
         await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
         await interaction.response.send_message("Channel locked.", ephemeral=True)
 
     @channel.command(name="unlock", description="Unlock the current text channel")
-    @app_commands.default_permissions(manage_channels=True)
+    @app_has_guild_permissions(manage_channels=True)
     async def channel_unlock(self, interaction: discord.Interaction) -> None:
         await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=None)
         await interaction.response.send_message("Channel unlocked.", ephemeral=True)
 
     @channel.command(name="slowmode", description="Set channel slowmode seconds")
-    @app_commands.default_permissions(manage_channels=True)
+    @app_has_guild_permissions(manage_channels=True)
     async def channel_slowmode(self, interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]) -> None:
         await interaction.channel.edit(slowmode_delay=seconds)
         await interaction.response.send_message(f"Slowmode set to {seconds}s.", ephemeral=True)
@@ -138,13 +138,13 @@ class CommandMenu(commands.Cog):
         await interaction.response.send_message("That reminder was cleared if it was active.", ephemeral=True)
 
     @role.command(name="add", description="Add a role to a member")
-    @app_commands.default_permissions(manage_roles=True)
+    @app_has_guild_permissions(manage_roles=True)
     async def role_add(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
         await member.add_roles(role, reason=f"Role add by {interaction.user}")
         await interaction.response.send_message(f"Added {role.mention} to {member.mention}.", ephemeral=True)
 
     @role.command(name="remove", description="Remove a role from a member")
-    @app_commands.default_permissions(manage_roles=True)
+    @app_has_guild_permissions(manage_roles=True)
     async def role_remove(self, interaction: discord.Interaction, member: discord.Member, role: discord.Role) -> None:
         await member.remove_roles(role, reason=f"Role remove by {interaction.user}")
         await interaction.response.send_message(f"Removed {role.mention} from {member.mention}.", ephemeral=True)
@@ -153,7 +153,7 @@ class CommandMenu(commands.Cog):
         if member.voice and isinstance(member.voice.channel, discord.VoiceChannel):
             channel = member.voice.channel
             owner = self.vc_owners.get(channel.id)
-            if owner in {None, member.id} or member.guild_permissions.manage_channels:
+            if owner in {None, member.id} or member.guild_permissions.manage_channels or member.id in self.bot.settings.owner_ids:
                 return channel
         return None
 
@@ -170,7 +170,7 @@ class CommandMenu(commands.Cog):
         return await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
 
     async def is_trusted(self, member: discord.Member) -> bool:
-        if member.guild_permissions.administrator or member.id == member.guild.owner_id:
+        if member.guild_permissions.administrator or member.id == member.guild.owner_id or await configured_owner(self.bot, member):
             return True
         settings = await self.settings(member.guild.id)
         anti = settings.get("antinuke_whitelist", [])

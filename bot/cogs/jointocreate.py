@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed
 
 
@@ -71,7 +71,7 @@ class JoinToCreate(commands.Cog):
         if not isinstance(member, discord.Member) or not member.voice or member.voice.channel.id not in self.owners:
             await interaction.response.send_message("Join your temporary channel first.", ephemeral=True)
             return
-        if self.owners[member.voice.channel.id] != member.id and not member.guild_permissions.manage_channels:
+        if self.owners[member.voice.channel.id] != member.id and not member.guild_permissions.manage_channels and not await configured_owner(self.bot, member):
             await interaction.response.send_message("Only the owner or moderators can rename this channel.", ephemeral=True)
             return
         await member.voice.channel.edit(name=name[:90])

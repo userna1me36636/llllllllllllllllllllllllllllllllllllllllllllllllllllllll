@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed
 
 
@@ -149,7 +149,7 @@ class AntiNukePanel(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             return False
-        allowed = interaction.user.guild_permissions.administrator or await interaction.client.is_owner(interaction.user)
+        allowed = interaction.user.guild_permissions.administrator or await configured_owner(interaction.client, interaction.user)
         if not allowed:
             await interaction.response.send_message("Only admins can use this panel.", ephemeral=True)
         return allowed

@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, configured_owner, has_guild_permissions
 
 
 class GodMode(commands.Cog):
@@ -31,7 +31,7 @@ class GodMode(commands.Cog):
         if actor.id == guild.owner_id or await self.bot.is_owner(actor):
             return True
         member = actor if isinstance(actor, discord.Member) else guild.get_member(actor.id)
-        return bool(member and member.guild_permissions.administrator)
+        return bool(member and (member.guild_permissions.administrator or await configured_owner(self.bot, member)))
 
     async def recent_actor(self, guild: discord.Guild, target_id: int, actions: list[discord.AuditLogAction], delay: float = 1.0) -> discord.Member | discord.User | None:
         if delay > 0:
@@ -71,7 +71,7 @@ class GodMode(commands.Cog):
         await self._remove(interaction, "roles", role.id)
 
     @commands.command(name="godmode")
-    @commands.has_guild_permissions(administrator=True)
+    @has_guild_permissions(administrator=True)
     async def prefix_godmode(self, ctx: commands.Context, action: str | None = None, target: discord.Member | discord.Role | None = None) -> None:
         """Prefix God Mode controls: add/remove a member or role."""
         if ctx.guild is None:
