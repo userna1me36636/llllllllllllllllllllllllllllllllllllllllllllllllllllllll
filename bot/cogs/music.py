@@ -207,12 +207,21 @@ class Music(commands.Cog):
 
         async def retry_or_continue(error: Exception) -> None:
             attempt_now = self.playback_attempts.get(guild.id, 0)
-            if attempt_now < 2:
+            if attempt_now < 3:
                 self.playback_attempts[guild.id] = attempt_now + 1
                 try:
-                    await channel.send(embed=embed("Music Retry", f"FFmpeg crashed, retrying `{track.title[:120]}` with backup mode `{attempt_now + 2}/3`."))
+                    if attempt_now + 1 == 3 and not track.local_path:
+                        await channel.send(embed=embed("Music Retry", f"Stream playback failed. Downloading `{track.title[:120]}` to temp audio and trying one last time."))
+                        await player.download_track(track)
+                    else:
+                        await channel.send(embed=embed("Music Retry", f"FFmpeg crashed, retrying `{track.title[:120]}` with backup mode `{attempt_now + 2}/4`."))
                 except discord.HTTPException:
                     pass
+                except Exception as download_error:
+                    self.playback_attempts[guild.id] = 0
+                    await report_after_error(download_error)
+                    await self.play_next(guild, channel)
+                    return
                 await self.start_track(guild, channel, track)
                 return
             self.playback_attempts[guild.id] = 0

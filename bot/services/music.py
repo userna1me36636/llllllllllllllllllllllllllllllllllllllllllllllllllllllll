@@ -20,7 +20,7 @@ FFMPEG_OPTS = {
 
 def ytdl_options() -> dict:
     opts = {
-        "format": "bestaudio/best",
+        "format": os.getenv("YTDLP_FORMAT", "ba[ext=m4a]/ba[acodec^=mp4a]/bestaudio/best"),
         "quiet": True,
         "noplaylist": False,
         "default_search": os.getenv("YTDLP_SEARCH_PROVIDER", "ytsearch"),
@@ -69,6 +69,7 @@ class Track:
     webpage_url: str
     requester_id: int
     duration: int | None = None
+    local_path: str | None = None
 
 
 class GuildPlayer:
@@ -94,14 +95,40 @@ class GuildPlayer:
             tracks.append(Track(item.get("title", "Unknown track"), item["url"], item.get("webpage_url", query), requester_id, item.get("duration")))
         return tracks
 
+    async def download_track(self, track: Track) -> str:
+        if track.local_path and Path(track.local_path).exists():
+            return track.local_path
+
+        def run() -> str:
+            out_dir = Path(tempfile.gettempdir()) / "ainbot-music-cache"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            opts = ytdl_options()
+            opts.update(
+                {
+                    "format": os.getenv("YTDLP_DOWNLOAD_FORMAT", "ba[ext=m4a]/ba[acodec^=mp4a]/bestaudio/best"),
+                    "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+                    "noplaylist": True,
+                    "quiet": True,
+                }
+            )
+            with yt_dlp.YoutubeDL(opts) as ytdl:
+                info = ytdl.extract_info(track.webpage_url, download=True)
+                return ytdl.prepare_filename(info)
+
+        track.local_path = await asyncio.to_thread(run)
+        return track.local_path
+
     def source(self, track: Track, mode: int = 0) -> discord.AudioSource:
         options = "-vn -loglevel warning"
         before_options = FFMPEG_OPTS["before_options"]
         if mode >= 2:
             before_options = "-nostdin"
+        source_url = track.local_path if mode >= 3 and track.local_path else track.url
+        if track.local_path:
+            before_options = "-nostdin"
         if mode == 0:
             return discord.FFmpegOpusAudio.from_probe(
-                track.url,
+                source_url,
                 method="fallback",
                 executable=ffmpeg_executable(mode),
                 before_options=before_options,
@@ -109,7 +136,7 @@ class GuildPlayer:
                 bitrate=128,
             )
         return discord.FFmpegOpusAudio(
-            track.url,
+            source_url,
             executable=ffmpeg_executable(mode),
             before_options=before_options,
             options=options,
