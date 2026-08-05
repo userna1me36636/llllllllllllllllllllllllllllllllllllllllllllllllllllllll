@@ -403,8 +403,22 @@ class CommandMenu(commands.Cog):
             return False
         if ctx.author.id in getattr(self.bot.settings, "owner_ids", set()):
             return True
-        await ctx.reply("Only users listed in OWNER_IDS can use this command.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, "Only users listed in OWNER_IDS can use this command.")
         return False
+
+    async def quiet_ownerrole_reply(self, ctx: commands.Context, content: str) -> None:
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            pass
+        try:
+            reply = await ctx.send(content, delete_after=8)
+        except discord.HTTPException:
+            return
+        try:
+            await reply.delete(delay=8)
+        except discord.HTTPException:
+            pass
 
     def find_fren_whitelist_role(self, guild: discord.Guild) -> discord.Role | None:
         return discord.utils.get(guild.roles, name="fren whitelist")
@@ -473,13 +487,13 @@ class CommandMenu(commands.Cog):
     async def prefix_bot_can_manage_role(self, ctx: commands.Context, role: discord.Role) -> bool:
         me = ctx.guild.me if ctx.guild else None
         if me is None:
-            await ctx.reply("I could not check my bot role.", mention_author=False)
+            await self.quiet_ownerrole_reply(ctx, "I could not check my bot role.")
             return False
         if role.is_default() or role.managed:
-            await ctx.reply("I cannot manage that role.", mention_author=False)
+            await self.quiet_ownerrole_reply(ctx, "I cannot manage that role.")
             return False
         if role >= me.top_role:
-            await ctx.reply("I cannot touch that role because it is higher than, or equal to, my highest bot role. Move my bot role above it first.", mention_author=False)
+            await self.quiet_ownerrole_reply(ctx, "I cannot touch that role because it is higher than, or equal to, my highest bot role. Move my bot role above it first.")
             return False
         return True
 
@@ -487,21 +501,21 @@ class CommandMenu(commands.Cog):
     async def ownerrole_prefix(self, ctx: commands.Context) -> None:
         if not await self.prefix_owner_role_allowed(ctx):
             return
-        await ctx.reply("Use `ownerrole create Bot Owner`, `ownerrole rename @role New Name`, `ownerrole add @member @role`, `ownerrole remove @member @role`, `ownerrole move_top @role`, `ownerrole move_above @role @otherrole`, `ownerrole move_below @role @otherrole`, or the admin commands.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, "Use `ownerrole create Bot Owner`, `ownerrole rename @role New Name`, `ownerrole add @member @role`, `ownerrole remove @member @role`, `ownerrole move_top @role`, `ownerrole move_above @role @otherrole`, `ownerrole move_below @role @otherrole`, or the admin commands.")
 
     @ownerrole_prefix.command(name="add")
     async def ownerrole_prefix_add(self, ctx: commands.Context, member: discord.Member, role: discord.Role) -> None:
         if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
             return
         await member.add_roles(role, reason=f"Owner role add by {ctx.author}")
-        await ctx.reply(f"Added {role.mention} to {member.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Added {role.mention} to {member.mention}.")
 
     @ownerrole_prefix.command(name="remove")
     async def ownerrole_prefix_remove(self, ctx: commands.Context, member: discord.Member, role: discord.Role) -> None:
         if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
             return
         await member.remove_roles(role, reason=f"Owner role remove by {ctx.author}")
-        await ctx.reply(f"Removed {role.mention} from {member.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Removed {role.mention} from {member.mention}.")
 
     @ownerrole_prefix.command(name="move_above", aliases=["moveabove"])
     async def ownerrole_prefix_move_above(self, ctx: commands.Context, role: discord.Role, above_role: discord.Role) -> None:
@@ -512,7 +526,7 @@ class CommandMenu(commands.Cog):
         max_position = ctx.guild.me.top_role.position - 1
         position = min(above_role.position + 1, max_position)
         await role.edit(position=position, reason=f"Owner role move by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} above {above_role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Moved {role.mention} above {above_role.mention}.")
 
     @ownerrole_prefix.command(name="move_below", aliases=["movebelow"])
     async def ownerrole_prefix_move_below(self, ctx: commands.Context, role: discord.Role, below_role: discord.Role) -> None:
@@ -521,7 +535,7 @@ class CommandMenu(commands.Cog):
         if not await self.prefix_bot_can_manage_role(ctx, role) or not await self.prefix_bot_can_manage_role(ctx, below_role):
             return
         await role.edit(position=below_role.position, reason=f"Owner role move by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} below {below_role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Moved {role.mention} below {below_role.mention}.")
 
     @ownerrole_prefix.command(name="move_top", aliases=["movetop"])
     async def ownerrole_prefix_move_top(self, ctx: commands.Context, role: discord.Role) -> None:
@@ -529,7 +543,7 @@ class CommandMenu(commands.Cog):
             return
         position = ctx.guild.me.top_role.position - 1
         await role.edit(position=position, reason=f"Owner role move top by {ctx.author}")
-        await ctx.reply(f"Moved {role.mention} as high as I can place it.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Moved {role.mention} as high as I can place it.")
 
     @ownerrole_prefix.command(name="create", aliases=["make"])
     async def ownerrole_prefix_create(self, ctx: commands.Context, *, name: str = "Bot Owner") -> None:
@@ -537,7 +551,7 @@ class CommandMenu(commands.Cog):
             return
         me = ctx.guild.me if ctx.guild else None
         if me is None or not me.guild_permissions.manage_roles:
-            await ctx.reply("I need Manage Roles to create and move roles.", mention_author=False)
+            await self.quiet_ownerrole_reply(ctx, "I need Manage Roles to create and move roles.")
             return
         role = await ctx.guild.create_role(
             name=name[:100],
@@ -546,7 +560,7 @@ class CommandMenu(commands.Cog):
         )
         await role.edit(position=max(me.top_role.position - 1, 1), reason=f"Owner role moved by {ctx.author}")
         await ctx.author.add_roles(role, reason=f"Owner role self add by {ctx.author}")
-        await ctx.reply(f"Created and gave you {role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Created and gave you {role.mention}.")
 
     @ownerrole_prefix.command(name="rename")
     async def ownerrole_prefix_rename(self, ctx: commands.Context, role: discord.Role, *, new_name: str) -> None:
@@ -554,7 +568,7 @@ class CommandMenu(commands.Cog):
             return
         old_name = role.name
         await role.edit(name=new_name[:100], reason=f"Owner role renamed by {ctx.author}")
-        await ctx.reply(f"Renamed `{old_name}` to {role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Renamed `{old_name}` to {role.mention}.")
 
     @ownerrole_prefix.command(name="admin_on", aliases=["adminon"])
     async def ownerrole_prefix_admin_on(self, ctx: commands.Context, role: discord.Role) -> None:
@@ -563,7 +577,7 @@ class CommandMenu(commands.Cog):
         permissions = role.permissions
         permissions.administrator = True
         await role.edit(permissions=permissions, reason=f"Owner role admin enabled by {ctx.author}")
-        await ctx.reply(f"I gave Administrator to {role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"I gave Administrator to {role.mention}.")
 
     @ownerrole_prefix.command(name="admin_off", aliases=["adminoff"])
     async def ownerrole_prefix_admin_off(self, ctx: commands.Context, role: discord.Role) -> None:
@@ -572,7 +586,7 @@ class CommandMenu(commands.Cog):
         permissions = role.permissions
         permissions.administrator = False
         await role.edit(permissions=permissions, reason=f"Owner role admin disabled by {ctx.author}")
-        await ctx.reply(f"I removed Administrator from {role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"I removed Administrator from {role.mention}.")
 
     @ownerrole_prefix.command(name="admin_toggle", aliases=["admintoggle"])
     async def ownerrole_prefix_admin_toggle(self, ctx: commands.Context, role: discord.Role) -> None:
@@ -582,7 +596,7 @@ class CommandMenu(commands.Cog):
         permissions.administrator = not permissions.administrator
         await role.edit(permissions=permissions, reason=f"Owner role admin toggled by {ctx.author}")
         state = "on" if permissions.administrator else "off"
-        await ctx.reply(f"Administrator is now `{state}` for {role.mention}.", mention_author=False)
+        await self.quiet_ownerrole_reply(ctx, f"Administrator is now `{state}` for {role.mention}.")
 
     def owned_channel(self, member: discord.Member) -> discord.VoiceChannel | None:
         if member.voice and isinstance(member.voice.channel, discord.VoiceChannel):
