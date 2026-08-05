@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import random
+import subprocess
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from bot.core.utils import embed, progress_bar
-from bot.services.music import MusicManager, Track
+from bot.services.music import MusicManager, Track, ffmpeg_candidates
 
 
 class MusicSearchModal(discord.ui.Modal):
@@ -110,6 +111,7 @@ class Music(commands.Cog):
         self.panel_messages: dict[int, discord.Message] = {}
         self.panel_channels: dict[int, int] = {}
         self.previous_tracks: dict[int, Track] = {}
+        self.playback_attempts: dict[int, int] = {}
 
     music = app_commands.Group(name="music", description="Music playback")
 
@@ -190,11 +192,53 @@ class Music(commands.Cog):
             except discord.HTTPException:
                 pass
 
+    async def start_track(self, guild: discord.Guild, channel: discord.abc.Messageable, track: Track) -> None:
+        player = self.manager.get(guild)
+        vc = guild.voice_client
+        if vc is None:
+            return
+        attempt = self.playback_attempts.get(guild.id, 0)
+
+        async def report_after_error(error: Exception) -> None:
+            try:
+                await channel.send(embed=embed("Playback Error", f"`{type(error).__name__}`: {str(error)[:300]}"))
+            except discord.HTTPException:
+                pass
+
+        async def retry_or_continue(error: Exception) -> None:
+            attempt_now = self.playback_attempts.get(guild.id, 0)
+            if attempt_now < 2:
+                self.playback_attempts[guild.id] = attempt_now + 1
+                try:
+                    await channel.send(embed=embed("Music Retry", f"FFmpeg crashed, retrying `{track.title[:120]}` with backup mode `{attempt_now + 2}/3`."))
+                except discord.HTTPException:
+                    pass
+                await self.start_track(guild, channel, track)
+                return
+            self.playback_attempts[guild.id] = 0
+            await report_after_error(error)
+            await self.play_next(guild, channel)
+
+        def after(error: Exception | None) -> None:
+            if error:
+                self.bot.loop.create_task(retry_or_continue(error))
+            else:
+                self.playback_attempts[guild.id] = 0
+                self.bot.loop.create_task(self.play_next(guild, channel))
+
+        try:
+            vc.play(player.source(track, attempt), after=after)
+        except Exception as exc:
+            await retry_or_continue(exc)
+            return
+        await self.send_or_update_panel(guild, channel)
+
     async def play_next(self, guild: discord.Guild, channel: discord.abc.Messageable) -> None:
         player = self.manager.get(guild)
         vc = guild.voice_client
         if vc is None:
             return
+        self.playback_attempts[guild.id] = 0
         if player.loop_one and player.current:
             track = player.current
         else:
@@ -208,29 +252,7 @@ class Music(commands.Cog):
                 return
             track = await player.queue.get()
             player.current = track
-
-        async def report_after_error(error: Exception) -> None:
-            try:
-                await channel.send(embed=embed("Playback Error", f"`{type(error).__name__}`: {str(error)[:300]}"))
-            except discord.HTTPException:
-                pass
-
-        def after(error: Exception | None) -> None:
-            if error:
-                self.bot.loop.create_task(report_after_error(error))
-            self.bot.loop.create_task(self.play_next(guild, channel))
-
-        try:
-            vc.play(player.source(track), after=after)
-        except Exception as exc:
-            player.current = None
-            try:
-                await channel.send(embed=embed("Playback Error", f"I queued the track, but could not start audio.\n`{type(exc).__name__}`: {str(exc)[:300]}"))
-            except discord.HTTPException:
-                pass
-            await self.refresh_panel(guild)
-            return
-        await self.send_or_update_panel(guild, channel)
+        await self.start_track(guild, channel, track)
 
     async def add_from_query(self, interaction: discord.Interaction, query: str) -> None:
         vc = await self.ensure_voice(interaction)
@@ -459,10 +481,25 @@ class Music(commands.Cog):
     async def volume(self, interaction: discord.Interaction, percent: app_commands.Range[int, 1, 200]) -> None:
         player = self.manager.get(interaction.guild)
         player.volume = percent / 100
-        if interaction.guild.voice_client and interaction.guild.voice_client.source:
+        if interaction.guild.voice_client and interaction.guild.voice_client.source and hasattr(interaction.guild.voice_client.source, "volume"):
             interaction.guild.voice_client.source.volume = player.volume
         await interaction.response.send_message(f"Volume set to {percent}%.", ephemeral=True)
         await self.refresh_panel(interaction.guild)
+
+    @music.command(name="doctor", description="Check music playback requirements")
+    async def doctor(self, interaction: discord.Interaction) -> None:
+        candidates = ffmpeg_candidates()
+        lines = []
+        for index, candidate in enumerate(candidates[:3], start=1):
+            try:
+                result = subprocess.run([candidate, "-version"], capture_output=True, text=True, timeout=8)
+                first_line = (result.stdout or result.stderr or "No version output").splitlines()[0]
+                lines.append(f"`{index}.` `{candidate}`\n{first_line[:180]}")
+            except Exception as exc:
+                lines.append(f"`{index}.` `{candidate}`\nFailed: `{type(exc).__name__}: {str(exc)[:120]}`")
+        if not lines:
+            lines.append("No FFmpeg candidates found.")
+        await interaction.response.send_message(embed=embed("Music Doctor", "\n\n".join(lines)), ephemeral=True)
 
     @music.command(name="lyrics", description="Show lyrics search guidance")
     async def lyrics(self, interaction: discord.Interaction, song: str | None = None) -> None:

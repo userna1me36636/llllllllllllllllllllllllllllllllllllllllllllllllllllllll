@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,8 +13,8 @@ import yt_dlp
 
 
 FFMPEG_OPTS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    "before_options": "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5",
+    "options": "-vn -loglevel warning",
 }
 
 
@@ -36,8 +37,27 @@ def ytdl_options() -> dict:
     return opts
 
 
-def ffmpeg_executable() -> str:
-    return os.getenv("FFMPEG_PATH") or imageio_ffmpeg.get_ffmpeg_exe()
+def ffmpeg_candidates() -> list[str]:
+    candidates = [
+        os.getenv("FFMPEG_PATH"),
+        shutil.which("ffmpeg"),
+        imageio_ffmpeg.get_ffmpeg_exe(),
+    ]
+    seen: set[str] = set()
+    found: list[str] = []
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        found.append(candidate)
+    return found
+
+
+def ffmpeg_executable(mode: int = 0) -> str:
+    candidates = ffmpeg_candidates()
+    if not candidates:
+        return "ffmpeg"
+    return candidates[min(mode, len(candidates) - 1)]
 
 
 @dataclass
@@ -72,12 +92,15 @@ class GuildPlayer:
             tracks.append(Track(item.get("title", "Unknown track"), item["url"], item.get("webpage_url", query), requester_id, item.get("duration")))
         return tracks
 
-    def source(self, track: Track) -> discord.AudioSource:
-        options = f"-vn -filter:a volume={self.volume}"
+    def source(self, track: Track, mode: int = 0) -> discord.AudioSource:
+        options = "-vn -loglevel warning"
+        before_options = FFMPEG_OPTS["before_options"]
+        if mode >= 2:
+            before_options = "-nostdin"
         return discord.FFmpegOpusAudio(
             track.url,
-            executable=ffmpeg_executable(),
-            before_options=FFMPEG_OPTS["before_options"],
+            executable=ffmpeg_executable(mode),
+            before_options=before_options,
             options=options,
             bitrate=128,
         )
