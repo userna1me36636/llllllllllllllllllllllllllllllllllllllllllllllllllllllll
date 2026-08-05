@@ -12,14 +12,14 @@ from bot.services.music import MusicManager, Track
 
 class MusicSearchModal(discord.ui.Modal):
     def __init__(self, cog: "Music", guild_id: int) -> None:
-        super().__init__(title="Play Music")
+        super().__init__(title="Add Song")
         self.cog = cog
         self.guild_id = guild_id
         self.query = discord.ui.TextInput(label="Song, search, playlist, or URL", max_length=250)
         self.add_item(self.query)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self.cog.play_from_query(interaction, str(self.query))
+        await self.cog.add_from_query(interaction, str(self.query))
 
 
 class MusicControls(discord.ui.View):
@@ -28,9 +28,13 @@ class MusicControls(discord.ui.View):
         self.cog = cog
         self.guild_id = guild_id
 
-    @discord.ui.button(label="Play", style=discord.ButtonStyle.success)
-    async def play_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @discord.ui.button(label="Add Song", style=discord.ButtonStyle.success)
+    async def add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(MusicSearchModal(self.cog, self.guild_id))
+
+    @discord.ui.button(label="Play", style=discord.ButtonStyle.primary)
+    async def play_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog.start_playback(interaction)
 
     @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.secondary)
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -131,7 +135,7 @@ class Music(commands.Cog):
             state = "Paused"
         elif vc:
             state = "Connected"
-        description = "Use the buttons below to control music while I am in VC."
+        description = "Add songs to the queue, then press Play to start them."
         e = embed("Music Panel", description)
         e.add_field(name="Status", value=state, inline=True)
         e.add_field(name="Volume", value=f"{int(player.volume * 100)}%", inline=True)
@@ -141,7 +145,7 @@ class Music(commands.Cog):
             if current.duration:
                 e.add_field(name="Progress", value=progress_bar(0, current.duration), inline=False)
         else:
-            e.add_field(name="Now Playing", value="Nothing yet. Press Play or use `/music play`.", inline=False)
+            e.add_field(name="Now Playing", value="Nothing yet. Use `/music add`, then `/music play`.", inline=False)
         queue_items = list(player.queue._queue)[:5]
         queue_text = "\n".join(f"`{i}.` {track.title[:80]}" for i, track in enumerate(queue_items, start=1))
         e.add_field(name="Up Next", value=queue_text or "Queue is empty.", inline=False)
@@ -228,7 +232,7 @@ class Music(commands.Cog):
             return
         await self.send_or_update_panel(guild, channel)
 
-    async def play_from_query(self, interaction: discord.Interaction, query: str) -> None:
+    async def add_from_query(self, interaction: discord.Interaction, query: str) -> None:
         vc = await self.ensure_voice(interaction)
         if vc is None:
             return
@@ -246,10 +250,23 @@ class Music(commands.Cog):
         for track in tracks[:50]:
             await player.queue.put(track)
         await interaction.followup.send(embed=embed("Queued", f"Added {len(tracks[:50])} track(s)."), ephemeral=True)
-        if not vc.is_playing() and not vc.is_paused():
-            await self.play_next(interaction.guild, interaction.channel)
-        else:
+        await self.send_or_update_panel(interaction.guild, interaction.channel)
+
+    async def start_playback(self, interaction: discord.Interaction) -> None:
+        vc = await self.ensure_voice(interaction)
+        if vc is None:
+            return
+        player = self.manager.get(interaction.guild)
+        if vc.is_playing() or vc.is_paused():
+            await interaction.response.send_message("Music is already started.", ephemeral=True)
+            await self.refresh_panel(interaction.guild)
+            return
+        if player.queue.empty():
+            await interaction.response.send_message("Queue is empty. Use `/music add` first.", ephemeral=True)
             await self.send_or_update_panel(interaction.guild, interaction.channel)
+            return
+        await interaction.response.send_message("Starting the queue.", ephemeral=True)
+        await self.play_next(interaction.guild, interaction.channel)
 
     @music.command(name="join", description="Join your voice channel and send the music panel")
     async def join(self, interaction: discord.Interaction) -> None:
@@ -289,9 +306,50 @@ class Music(commands.Cog):
         await self.send_or_update_panel(ctx.guild, ctx.channel)
         await ctx.reply("Joined and sent the music panel.", delete_after=5, mention_author=False)
 
-    @music.command(name="play", description="Play a song or playlist")
-    async def play(self, interaction: discord.Interaction, query: str) -> None:
-        await self.play_from_query(interaction, query)
+    @music.command(name="add", description="Add a song or playlist to the queue")
+    async def add(self, interaction: discord.Interaction, query: str) -> None:
+        await self.add_from_query(interaction, query)
+
+    @commands.command(name="addsong", aliases=["addtrack"])
+    async def prefix_add_song(self, ctx: commands.Context, *, query: str) -> None:
+        if not isinstance(ctx.author, discord.Member) or not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.reply("Join a voice channel first.", mention_author=False)
+            return
+        if ctx.guild.voice_client is None:
+            await ctx.author.voice.channel.connect(self_deaf=True)
+        player = self.manager.get(ctx.guild)
+        try:
+            tracks = await player.resolve(query, ctx.author.id)
+        except Exception as exc:
+            await ctx.reply(embed=embed("Search Error", f"I could not load that track.\n`{type(exc).__name__}`: {str(exc)[:300]}"), mention_author=False)
+            return
+        for track in tracks[:50]:
+            await player.queue.put(track)
+        await self.send_or_update_panel(ctx.guild, ctx.channel)
+        await ctx.reply(embed=embed("Queued", f"Added {len(tracks[:50])} track(s)."), mention_author=False)
+
+    @music.command(name="play", description="Start playing the queued songs")
+    async def play(self, interaction: discord.Interaction) -> None:
+        await self.start_playback(interaction)
+
+    @commands.command(name="play")
+    async def prefix_play(self, ctx: commands.Context) -> None:
+        if not isinstance(ctx.author, discord.Member) or not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.reply("Join a voice channel first.", mention_author=False)
+            return
+        if ctx.guild.voice_client is None:
+            await ctx.author.voice.channel.connect(self_deaf=True)
+        player = self.manager.get(ctx.guild)
+        vc = ctx.guild.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+            await ctx.reply("Music is already started.", mention_author=False)
+            return
+        if player.queue.empty():
+            await ctx.reply("Queue is empty. Use `!addsong song name` first.", mention_author=False)
+            await self.send_or_update_panel(ctx.guild, ctx.channel)
+            return
+        await ctx.reply("Starting the queue.", delete_after=5, mention_author=False)
+        await self.play_next(ctx.guild, ctx.channel)
 
     @music.command(name="queue", description="Show the queue")
     async def queue(self, interaction: discord.Interaction) -> None:
