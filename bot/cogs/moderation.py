@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import has_guild_permissions
+from bot.core.checks import configured_owner, has_guild_permissions
 from bot.core.utils import embed, parse_duration
 
 
@@ -19,6 +19,8 @@ class Moderation(commands.Cog):
     async def protected(self, guild_id: int, target: discord.Member, actor: discord.Member) -> bool:
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
         gm = settings.get("godmode", {})
+        if target.id in getattr(self.bot.settings, "owner_ids", set()) and not await configured_owner(self.bot, actor):
+            return True
         if actor.guild_permissions.administrator or actor.id == target.guild.owner_id:
             return False
         return target.id in gm.get("users", []) or any(role.id in gm.get("roles", []) for role in target.roles)
@@ -52,6 +54,9 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="softban")
     @has_guild_permissions(ban_members=True)
     async def softban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided") -> None:
+        if await self.protected(ctx.guild.id, member, ctx.author):
+            await ctx.reply("That member is protected.", mention_author=False)
+            return
         await member.ban(reason=reason, delete_message_days=1)
         await ctx.guild.unban(member, reason="Softban release")
         case_id = await self.case(ctx.guild.id, member.id, ctx.author.id, "softban", reason)
@@ -60,6 +65,9 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(name="tempban")
     @has_guild_permissions(ban_members=True)
     async def tempban(self, ctx: commands.Context, member: discord.Member, duration: str, *, reason: str = "No reason provided") -> None:
+        if await self.protected(ctx.guild.id, member, ctx.author):
+            await ctx.reply("That member is protected.", mention_author=False)
+            return
         delta = parse_duration(duration)
         expires = discord.utils.utcnow() + delta
         await member.ban(reason=reason)
@@ -163,6 +171,9 @@ class Moderation(commands.Cog):
     @mod.command(name="ban", description="Ban a member")
     @app_commands.default_permissions(ban_members=True)
     async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
+        if await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected.", ephemeral=True)
+            return
         await member.ban(reason=reason)
         await self.case(interaction.guild_id, member.id, interaction.user.id, "ban", reason)
         await interaction.response.send_message(embed=embed("Banned", member.mention))

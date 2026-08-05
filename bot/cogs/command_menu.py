@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed, parse_duration
 
 
@@ -47,8 +47,13 @@ class CommandMenu(commands.Cog):
         await interaction.response.send_message(f"Pong: {round(self.bot.latency * 1000)}ms")
 
     @app_commands.command(name="sync", description="Owner only: refresh slash commands")
-    async def sync(self, interaction: discord.Interaction) -> None:
-        if not await self.bot.is_owner(interaction.user):
+    async def sync(
+        self,
+        interaction: discord.Interaction,
+        announce_channel: discord.TextChannel | None = None,
+        message: str = "New bot update is live. Slash commands were refreshed and the newest features are ready.",
+    ) -> None:
+        if not await configured_owner(self.bot, interaction.user):
             await interaction.response.send_message("Owner only.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -57,6 +62,27 @@ class CommandMenu(commands.Cog):
         if interaction.guild is not None:
             self.bot.tree.copy_global_to(guild=interaction.guild)
             guild_synced = await self.bot.tree.sync(guild=interaction.guild)
+            settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+            channel = announce_channel
+            if channel is not None:
+                await self.bot.db.set_settings_value(interaction.guild_id, "sync_announce_channel", channel.id, self.bot.settings.default_prefix)
+            elif settings.get("sync_announce_channel"):
+                saved_channel = interaction.guild.get_channel(int(settings["sync_announce_channel"]))
+                channel = saved_channel if isinstance(saved_channel, discord.TextChannel) else None
+            if channel is not None:
+                e = embed("Bot Update", message[:350])
+                e.add_field(name="Slash Commands", value=f"`{len(guild_synced)}` server commands refreshed.", inline=True)
+                e.add_field(name="Status", value="Online and ready.", inline=True)
+                e.set_footer(text=f"Updated by {interaction.user}")
+                try:
+                    await channel.send(
+                        content="@here",
+                        embed=e,
+                        allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False),
+                    )
+                except discord.HTTPException:
+                    await interaction.followup.send("Synced commands, but I could not post the update announcement in that channel.", ephemeral=True)
+                    return
         await interaction.followup.send(
             f"Synced {len(global_synced)} global commands and {len(guild_synced)} server commands.",
             ephemeral=True,

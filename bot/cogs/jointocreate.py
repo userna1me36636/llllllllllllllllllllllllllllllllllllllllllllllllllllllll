@@ -8,6 +8,123 @@ from bot.core.checks import app_admin
 from bot.core.utils import embed
 
 
+class JtcRenameModal(discord.ui.Modal):
+    def __init__(self, cog: "JoinToCreate", channel: discord.VoiceChannel) -> None:
+        super().__init__(title="Rename Voice Channel")
+        self.cog = cog
+        self.channel = channel
+        self.name_input = discord.ui.TextInput(label="New name", default=channel.name, max_length=90)
+        self.add_item(self.name_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not await self.cog.can_control(interaction, self.channel):
+            return
+        await self.channel.edit(name=str(self.name_input)[:90], reason=f"JTC rename by {interaction.user}")
+        await interaction.response.send_message("Voice channel renamed.", ephemeral=True)
+
+
+class JtcLimitModal(discord.ui.Modal):
+    def __init__(self, cog: "JoinToCreate", channel: discord.VoiceChannel) -> None:
+        super().__init__(title="Set User Limit")
+        self.cog = cog
+        self.channel = channel
+        self.limit_input = discord.ui.TextInput(label="Limit", placeholder="0 for unlimited", default=str(channel.user_limit), max_length=2)
+        self.add_item(self.limit_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not await self.cog.can_control(interaction, self.channel):
+            return
+        try:
+            limit = max(0, min(99, int(str(self.limit_input))))
+        except ValueError:
+            await interaction.response.send_message("Use a number from 0 to 99.", ephemeral=True)
+            return
+        await self.channel.edit(user_limit=limit, reason=f"JTC limit by {interaction.user}")
+        await interaction.response.send_message(f"User limit set to `{limit}`.", ephemeral=True)
+
+
+class JtcControlView(discord.ui.View):
+    def __init__(self, cog: "JoinToCreate", channel_id: int) -> None:
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.channel_id = channel_id
+
+    async def channel(self, interaction: discord.Interaction) -> discord.VoiceChannel | None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return None
+        channel = interaction.guild.get_channel(self.channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            await interaction.response.send_message("That temp voice channel is gone.", ephemeral=True)
+            return None
+        return channel
+
+    @discord.ui.button(label="Claim", emoji="👑", style=discord.ButtonStyle.primary)
+    async def claim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        self.cog.owners[channel.id] = interaction.user.id
+        await self.cog.save_temp_owner(channel.guild, channel.id, interaction.user.id)
+        await channel.set_permissions(interaction.user, manage_channels=True, connect=True, view_channel=True)
+        await interaction.response.send_message(f"{interaction.user.mention} now owns this VC.", ephemeral=True)
+
+    @discord.ui.button(label="Rename", emoji="✏️", style=discord.ButtonStyle.secondary)
+    async def rename(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        if not await self.cog.can_control(interaction, channel, respond=False):
+            await interaction.response.send_message("Only the VC owner or moderators can use this.", ephemeral=True)
+            return
+        await interaction.response.send_modal(JtcRenameModal(self.cog, channel))
+
+    @discord.ui.button(label="Limit", emoji="👥", style=discord.ButtonStyle.secondary)
+    async def limit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        if not await self.cog.can_control(interaction, channel, respond=False):
+            await interaction.response.send_message("Only the VC owner or moderators can use this.", ephemeral=True)
+            return
+        await interaction.response.send_modal(JtcLimitModal(self.cog, channel))
+
+    @discord.ui.button(label="Lock", emoji="🔒", style=discord.ButtonStyle.danger)
+    async def lock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_control(interaction, channel):
+            return
+        await channel.set_permissions(channel.guild.default_role, connect=False)
+        await interaction.response.send_message("Voice channel locked.", ephemeral=True)
+
+    @discord.ui.button(label="Unlock", emoji="🔓", style=discord.ButtonStyle.success)
+    async def unlock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_control(interaction, channel):
+            return
+        await channel.set_permissions(channel.guild.default_role, connect=None)
+        await interaction.response.send_message("Voice channel unlocked.", ephemeral=True)
+
+    @discord.ui.button(label="Hide", emoji="🙈", style=discord.ButtonStyle.secondary)
+    async def hide(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_control(interaction, channel):
+            return
+        await channel.set_permissions(channel.guild.default_role, view_channel=False)
+        await interaction.response.send_message("Voice channel hidden.", ephemeral=True)
+
+    @discord.ui.button(label="Reveal", emoji="👁️", style=discord.ButtonStyle.secondary)
+    async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_control(interaction, channel):
+            return
+        await channel.set_permissions(channel.guild.default_role, view_channel=None)
+        await interaction.response.send_message("Voice channel revealed.", ephemeral=True)
+
+
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -18,6 +135,39 @@ class JoinToCreate(commands.Cog):
         self.cleanup_empty_jtc_channels.cancel()
 
     jtc = app_commands.Group(name="jtc", description="Join-to-create voice channels")
+
+    async def save_temp_owner(self, guild: discord.Guild, channel_id: int, owner_id: int) -> None:
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        temp_channels = settings.get("jtc_temp_channels", {})
+        data = temp_channels.setdefault(str(channel_id), {})
+        data["owner_id"] = owner_id
+        await self.bot.db.set_settings_value(guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
+
+    async def can_control(self, interaction: discord.Interaction, channel: discord.VoiceChannel, respond: bool = True) -> bool:
+        if not isinstance(interaction.user, discord.Member):
+            if respond:
+                await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return False
+        settings = await self.bot.db.get_settings(channel.guild.id, self.bot.settings.default_prefix)
+        saved = settings.get("jtc_temp_channels", {}).get(str(channel.id), {})
+        owner_id = self.owners.get(channel.id) or saved.get("owner_id")
+        if owner_id == interaction.user.id or interaction.user.guild_permissions.manage_channels:
+            return True
+        if respond:
+            await interaction.response.send_message("Only the VC owner or moderators can use this.", ephemeral=True)
+        return False
+
+    def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
+        e = embed("Voice Control Panel", f"Owner: {owner.mention}\nUse the buttons below to control {channel.mention}.")
+        e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
+        e.set_footer(text="This panel stays with the temp VC and deletes when the VC is empty.")
+        return e
+
+    async def send_control_panel(self, channel: discord.VoiceChannel, owner: discord.Member) -> None:
+        try:
+            await channel.send(content=owner.mention, embed=self.control_embed(channel, owner), view=JtcControlView(self, channel.id))
+        except discord.HTTPException:
+            pass
 
     @tasks.loop(seconds=45)
     async def cleanup_empty_jtc_channels(self) -> None:
@@ -150,6 +300,7 @@ class JoinToCreate(commands.Cog):
                 await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
                 await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
                 await member.move_to(channel)
+                await self.send_control_panel(channel, member)
         if before.channel and not before.channel.members:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             temp_channels = settings.get("jtc_temp_channels", {})
