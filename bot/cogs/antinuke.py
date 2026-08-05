@@ -331,19 +331,25 @@ class AntiNuke(commands.Cog):
         await interaction.response.send_message("Whitelist updated.", ephemeral=True)
 
     async def actor_from_audit(self, guild: discord.Guild, action: discord.AuditLogAction) -> discord.Member | None:
-        async for entry in guild.audit_logs(limit=3, action=action):
-            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
-                continue
-            if entry.user:
-                return guild.get_member(entry.user.id)
+        try:
+            async for entry in guild.audit_logs(limit=3, action=action):
+                if (discord.utils.utcnow() - entry.created_at).total_seconds() > 10:
+                    continue
+                if entry.user:
+                    return guild.get_member(entry.user.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
         return None
 
     async def actor_from_ban_audit(self, guild: discord.Guild, user: discord.User) -> discord.Member | None:
-        async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.ban):
-            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 15:
-                continue
-            if entry.target and entry.target.id == user.id and entry.user:
-                return guild.get_member(entry.user.id)
+        try:
+            async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.ban):
+                if (discord.utils.utcnow() - entry.created_at).total_seconds() > 15:
+                    continue
+                if entry.target and entry.target.id == user.id and entry.user:
+                    return guild.get_member(entry.user.id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
         return None
 
     async def protect_owner_from_ban(self, guild: discord.Guild, user: discord.User) -> bool:

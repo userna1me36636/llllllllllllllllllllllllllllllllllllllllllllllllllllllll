@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin
-from bot.core.utils import embed
+from bot.core.utils import embed, progress_bar, style_embed
 
 
 SHOP = {"cookie": 50, "badge": 500, "vip-pass": 2500}
@@ -28,12 +28,25 @@ class Economy(commands.Cog):
             row = await self.bot.db.fetchrow("SELECT * FROM economy WHERE guild_id=? AND user_id=?", guild_id, user_id)
         return row
 
+    async def theme(self, guild_id: int) -> dict:
+        settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
+        return settings.get("theme", {})
+
+    async def economy_embed(self, guild_id: int, title: str, description: str) -> discord.Embed:
+        theme = await self.theme(guild_id)
+        color = discord.Color(int(theme.get("color", 11146790)))
+        return style_embed(embed(title, description, color), banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
+
     @economy.command(name="balance", description="Show balance")
     async def balance(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
         await interaction.response.defer()
         member = member or interaction.user
         row = await self.account(interaction.guild_id, member.id)
-        await interaction.followup.send(embed=embed("Balance", f"{member.mention}\nWallet: {row['wallet']}\nBank: {row['bank']}"))
+        total = int(row["wallet"]) + int(row["bank"])
+        e = await self.economy_embed(interaction.guild_id, "Balance", f"{member.mention}\nWallet: `{row['wallet']}`\nBank: `{row['bank']}`")
+        e.add_field(name="Total", value=f"`{total}` coins", inline=True)
+        e.add_field(name="Coin Glow", value=progress_bar(min(total, 10000), 10000), inline=True)
+        await interaction.followup.send(embed=e)
 
     @economy.command(name="daily", description="Claim daily coins")
     async def daily(self, interaction: discord.Interaction) -> None:
@@ -84,7 +97,9 @@ class Economy(commands.Cog):
 
     @economy.command(name="shop", description="Show shop")
     async def shop(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_message(embed=embed("Shop", "\n".join(f"{k}: {v}" for k, v in SHOP.items())))
+        e = await self.economy_embed(interaction.guild_id, "Shop", "\n".join(f"`{k}` - `{v}` coins" for k, v in SHOP.items()))
+        e.add_field(name="Tip", value="Use `/economy buy` to grab an item.", inline=False)
+        await interaction.response.send_message(embed=e)
 
     @economy.command(name="buy", description="Buy a shop item")
     async def buy(self, interaction: discord.Interaction, item: str) -> None:

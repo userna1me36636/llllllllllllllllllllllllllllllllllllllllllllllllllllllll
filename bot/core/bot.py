@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterable
 
 import discord
+from discord import app_commands
 from discord.errors import NotFound
 from discord.ext import commands
 
@@ -13,10 +14,28 @@ from bot.core.logging import setup_logging
 
 
 COGS: tuple[str, ...] = (
+    "bot.cogs.help",
     "bot.cogs.admin",
-    "bot.cogs.vc_music_tools",
+    "bot.cogs.doctor",
+    "bot.cogs.setup_tools",
+    "bot.cogs.moderation",
+    "bot.cogs.automod",
+    "bot.cogs.antinuke",
+    "bot.cogs.godmode",
     "bot.cogs.jointocreate",
     "bot.cogs.music",
+    "bot.cogs.tickets",
+    "bot.cogs.roles",
+    "bot.cogs.welcome",
+    "bot.cogs.leveling",
+    "bot.cogs.giveaways",
+    "bot.cogs.economy",
+    "bot.cogs.utility",
+    "bot.cogs.event_logging",
+    "bot.cogs.command_menu",
+    "bot.cogs.ai_chat",
+    "bot.cogs.vouch",
+    "bot.cogs.server_backup",
 )
 
 
@@ -66,6 +85,8 @@ class AllInOneBot(commands.Bot):
         allowed = overrides.get(ctx.command.qualified_name) or overrides.get(ctx.command.name)
         if not allowed:
             return True
+        if ctx.prefix == self.settings.default_prefix:
+            return True
         return ctx.prefix in allowed
 
     async def setup_hook(self) -> None:
@@ -85,25 +106,52 @@ class AllInOneBot(commands.Bot):
     async def on_ready(self) -> None:
         self.log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
 
+    async def themed_embed(self, guild_id: int | None, title: str, description: str | None = None) -> discord.Embed:
+        color = discord.Color.from_rgb(170, 22, 38)
+        if guild_id is not None:
+            try:
+                settings = await self.db.get_settings(guild_id, self.settings.default_prefix)
+                theme = settings.get("theme", {})
+                color = discord.Color(int(theme.get("color", color.value)))
+            except Exception:
+                pass
+        return discord.Embed(title=title, description=description, color=color)
+
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         error = getattr(error, "original", error)
         if isinstance(error, (commands.CommandNotFound, commands.NotOwner)):
             return
         if isinstance(error, commands.MissingPermissions):
-            await self.safe_context_reply(ctx, "You do not have permission to use that command.")
+            await self.safe_context_reply(ctx, "Missing Permission")
             return
         if isinstance(error, commands.BadArgument):
-            await self.safe_context_reply(ctx, f"Bad input: {error}")
+            await self.safe_context_reply(ctx, "Bad Input", str(error))
             return
         self.log.exception("Command error in %s", ctx.command, exc_info=error)
-        await self.safe_context_reply(ctx, "Something went wrong while running that command.")
+        await self.safe_context_reply(ctx, "Command Error")
 
-    async def safe_context_reply(self, ctx: commands.Context, content: str) -> None:
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        error = getattr(error, "original", error)
+        if isinstance(error, app_commands.MissingPermissions):
+            embed = await self.themed_embed(interaction.guild_id, "Missing Permission")
+        else:
+            self.log.exception("Slash command error in %s", getattr(interaction.command, "qualified_name", "unknown"), exc_info=error)
+            embed = await self.themed_embed(interaction.guild_id, "Command Error")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except NotFound:
+            self.log.warning("Could not reply because the interaction expired.")
+
+    async def safe_context_reply(self, ctx: commands.Context, title: str, description: str | None = None) -> None:
+        message = await self.themed_embed(ctx.guild.id if ctx.guild else None, title, description)
         try:
             if ctx.interaction and ctx.interaction.response.is_done():
-                await ctx.interaction.followup.send(content, ephemeral=True)
+                await ctx.interaction.followup.send(embed=message, ephemeral=True)
             else:
-                await ctx.reply(content, mention_author=False)
+                await ctx.reply(embed=message, mention_author=False)
         except NotFound:
             self.log.warning("Could not reply because the interaction expired.")
 

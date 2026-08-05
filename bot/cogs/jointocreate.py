@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 
 import discord
@@ -180,8 +179,6 @@ class JoinToCreate(commands.Cog):
         self.owners: dict[int, int] = {}
         self.theme_colors: dict[int, int] = {}
         self.theme_options: dict[int, dict] = {}
-        self.panel_messages: dict[int, int] = {}
-        self.panel_sent_at: dict[int, float] = {}
         self.cleanup_empty_jtc_channels.start()
 
     def cog_unload(self) -> None:
@@ -321,29 +318,11 @@ class JoinToCreate(commands.Cog):
             pass
 
     async def send_control_panel(self, channel: discord.VoiceChannel, owner: discord.Member) -> None:
-        now = time.time()
-        if now - self.panel_sent_at.get(channel.id, 0) < 8:
-            return
-        self.panel_sent_at[channel.id] = now
-        await asyncio.sleep(0.8)
-        await self.load_theme(channel.guild)
-        embed_obj = self.control_embed(channel, owner)
-        view = JtcControlView(self, channel.id)
         try:
-            old_message_id = self.panel_messages.get(channel.id)
-            if old_message_id:
-                try:
-                    old_message = await channel.fetch_message(old_message_id)
-                    await old_message.delete()
-                except discord.HTTPException:
-                    pass
-            message = await channel.send(content=owner.mention, embed=embed_obj, view=view)
-            self.panel_messages[channel.id] = message.id
+            await self.load_theme(channel.guild)
+            await channel.send(content=owner.mention, embed=self.control_embed(channel, owner), view=JtcControlView(self, channel.id))
         except discord.HTTPException:
-            try:
-                await owner.send(embed=embed("JTC Panel Could Not Open", f"I created {channel.mention}, but I could not post the control panel inside its chat. Give me **Send Messages**, **Embed Links**, and **Use External Apps** in that VC/category."))
-            except discord.HTTPException:
-                pass
+            pass
 
     @tasks.loop(seconds=45)
     async def cleanup_empty_jtc_channels(self) -> None:
@@ -478,11 +457,6 @@ class JoinToCreate(commands.Cog):
                 await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
                 await member.move_to(channel)
                 await self.send_control_panel(channel, member)
-            elif str(after.channel.id) in settings.get("jtc_temp_channels", {}):
-                saved = settings.get("jtc_temp_channels", {}).get(str(after.channel.id), {})
-                owner_id = self.owners.get(after.channel.id) or saved.get("owner_id")
-                if owner_id == member.id:
-                    await self.send_control_panel(after.channel, member)
         if before.channel and not before.channel.members:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             temp_channels = settings.get("jtc_temp_channels", {})
@@ -490,8 +464,6 @@ class JoinToCreate(commands.Cog):
             if not is_temp_channel:
                 return
             self.owners.pop(before.channel.id, None)
-            self.panel_messages.pop(before.channel.id, None)
-            self.panel_sent_at.pop(before.channel.id, None)
             temp_channels.pop(str(before.channel.id), None)
             await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
             await before.channel.delete(reason="Empty join-to-create channel")

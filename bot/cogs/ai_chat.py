@@ -99,7 +99,7 @@ class AiChat(commands.Cog):
     async def ask_ai(self, prompt: str, user: discord.abc.User, guild: discord.Guild | None = None, admin: bool | None = None) -> str:
         key = self.bot.settings.openai_api_key
         if not key:
-            return "AI needs `OPENAI_API_KEY` in Railway Variables."
+            return "AI is not set up yet. Ask the owner to add `OPENAI_API_KEY` in Railway Variables."
         is_admin = await self.is_admin_user(user, guild) if admin is None else admin
         if self.needs_admin_context(prompt) and not is_admin:
             return "That is an admin-only server question. Ask someone with Admin or an OWNER_IDS user to use `/ai speak`."
@@ -134,18 +134,24 @@ class AiChat(commands.Cog):
                         text = await resp.text()
                         return f"AI error: OpenAI sent a bad response: `{text[:350]}`"
                     if resp.status >= 400:
-                        message = data.get("error", {}).get("message", "AI request failed.")
-                        return f"AI error: `{message[:400]}`"
+                        error = data.get("error", {})
+                        code = str(error.get("code") or "").lower()
+                        message = str(error.get("message") or "AI request failed.")
+                        if "insufficient_quota" in code or "no credits" in message.lower() or "billing" in message.lower():
+                            return "AI is set up, but the OpenAI account has no credits right now."
+                        if "incorrect api key" in message.lower() or "invalid api key" in message.lower():
+                            return "AI is set up, but the OpenAI API key is not valid. Ask the owner to replace it in Railway."
+                        return f"AI could not answer right now: `{message[:300]}`"
         except asyncio.TimeoutError:
-            return "AI error: OpenAI took too long to answer. Try again in a minute."
+            return "AI took too long to answer. Try again in a minute."
         except aiohttp.ClientError as exc:
-            return f"AI error: Could not connect to OpenAI: `{type(exc).__name__}`."
+            return f"AI could not connect right now: `{type(exc).__name__}`."
         except Exception as exc:
-            return f"AI error: `{type(exc).__name__}: {str(exc)[:300]}`"
+            return f"AI had a problem: `{type(exc).__name__}: {str(exc)[:250]}`"
         try:
             return data["choices"][0]["message"]["content"][:1900]
         except Exception:
-            return "AI error: OpenAI answered, but I could not read the message."
+            return "AI answered, but I could not read the message."
 
     async def ai_toggle(self, interaction: discord.Interaction, enabled: bool | None = None) -> None:
         if interaction.guild is None:
