@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import html
 import json
+import os
+import tempfile
 from typing import Any
 import datetime as dt
+from pathlib import Path
 
 import discord
-from aiohttp import web
+from aiohttp import ClientSession, web
 from discord.ext import commands
+
+from bot.cogs.server_backup import make_code
+from bot.services.music import ffmpeg_executable
 
 
 def dashboard_html() -> str:
@@ -30,7 +36,9 @@ def dashboard_html() -> str:
     .panel { border:1px solid var(--line); background:linear-gradient(145deg,var(--red),rgba(255,255,255,.055)); backdrop-filter:blur(16px); border-radius:8px; padding:16px; box-shadow:0 20px 80px rgba(0,0,0,.35); }
     .card { border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.22); border-radius:8px; padding:12px; margin-top:10px; }
     label { display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }
-    input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
+    input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:#171017; color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
+    option { background:#171017; color:#f7f2f5; }
+    option:checked, option:hover { background:#b2182c; color:#fff; }
     button { border:1px solid rgba(255,255,255,.28); background:rgba(255,255,255,.11); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; }
     button:hover { border-color:var(--hot); }
     .row { display:flex; gap:8px; }
@@ -86,6 +94,11 @@ def dashboard_html() -> str:
           <label>Voice channel</label>
           <select id="voiceChannels"></select>
           <div class="row"><button onclick="joinVoice()">Join VC</button><button onclick="leaveVoice()">Leave VC</button></div>
+          <label>Type to talk in VC</label>
+          <textarea id="ttsText" maxlength="900" placeholder="Type what the bot should say in voice..."></textarea>
+          <label>Voice style</label>
+          <select id="ttsVoice"><option value="alloy">Alloy</option><option value="verse">Verse</option><option value="nova">Nova</option><option value="shimmer">Shimmer</option><option value="echo">Echo</option></select>
+          <button onclick="speakVoice()">Speak In VC</button>
         </div>
         <div class="card">
           <h2>Bot Chat</h2>
@@ -94,6 +107,12 @@ def dashboard_html() -> str:
           <label>Message as bot</label>
           <textarea id="botMessage" maxlength="1900" placeholder="Type what the bot should send..."></textarea>
           <button onclick="sendBotMessage()">Send Message</button>
+        </div>
+        <div class="card">
+          <h2>Announcement Embed</h2>
+          <label>Title</label><input id="embedTitle" placeholder="Update">
+          <label>Message</label><textarea id="embedText" maxlength="3500" placeholder="Clean announcement text..."></textarea>
+          <button onclick="sendEmbed()">Send Embed</button>
         </div>
         <p class="status" id="status"></p>
       </section>
@@ -119,6 +138,34 @@ def dashboard_html() -> str:
             <button onclick="kickMember()">Kick</button>
             <button onclick="banMember()">Ban</button>
           </div>
+        </div>
+        <div class="card">
+          <h2>Music Controls</h2>
+          <label>Song or URL</label><input id="musicQuery" placeholder="YouTube, playlist, or search">
+          <div class="row"><button onclick="music('add')">Add</button><button onclick="music('play')">Play</button><button onclick="music('pause')">Pause</button><button onclick="music('resume')">Resume</button></div>
+          <div class="row"><button onclick="music('skip')">Skip</button><button onclick="music('stop')">Stop</button><button onclick="music('loop')">Loop</button><button onclick="music('shuffle')">Shuffle</button></div>
+          <label>Volume</label><div class="row"><input id="musicVolume" type="number" min="1" max="200" value="70"><button onclick="music('volume')">Set Volume</button></div>
+          <div id="musicBox" class="card"></div>
+        </div>
+        <div class="card">
+          <h2>Security & Backup</h2>
+          <div class="row"><button onclick="backup()">Make Backup Code</button><button onclick="antinuke(true)">Anti-Nuke On</button><button onclick="antinuke(false)">Anti-Nuke Off</button></div>
+          <label>Whitelist selected member/role</label>
+          <div class="row"><button onclick="antiWhitelist('member')">Whitelist Member</button><button onclick="antiWhitelist('role')">Whitelist Role</button></div>
+          <p id="backupBox"></p>
+        </div>
+        <div class="card">
+          <h2>Economy & Roles</h2>
+          <label>Coins</label><input id="coins" type="number" value="1000">
+          <div class="row"><button onclick="coins('add')">Add Coins</button><button onclick="coins('take')">Take Coins</button><button onclick="coins('set')">Set Wallet</button></div>
+          <label>Role name</label><input id="roleName" placeholder="New role name">
+          <label>Role color</label><input id="roleColor" placeholder="#b2182c">
+          <div class="row"><button onclick="createRole()">Create Role</button><button onclick="renameRole()">Rename Selected Role</button><button onclick="moveRoleTop()">Move Selected Role Top</button></div>
+        </div>
+        <div class="card">
+          <h2>Live Logs</h2>
+          <button onclick="loadLogs()">Refresh Logs</button>
+          <div id="logsBox"></div>
         </div>
         <div id="results" class="card"></div>
       </main>
@@ -164,7 +211,9 @@ async function saveTheme(){ await api('/api/guild/' + guild() + '/theme', {metho
 async function feature(enabled){ await api('/api/guild/' + guild() + '/feature', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({feature:$('feature').value, enabled})}); setStatus('Feature updated.'); }
 async function joinVoice(){ await api('/api/guild/' + guild() + '/voice/join', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('voiceChannels').value})}); setStatus('Bot joined the VC.'); }
 async function leaveVoice(){ await api('/api/guild/' + guild() + '/voice/leave', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({})}); setStatus('Bot left the VC.'); }
+async function speakVoice(){ await api('/api/guild/' + guild() + '/voice/speak', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({text:$('ttsText').value, voice:$('ttsVoice').value, channel_id:$('voiceChannels').value})}); setStatus('Bot is speaking in VC.'); $('ttsText').value=''; }
 async function sendBotMessage(){ await api('/api/guild/' + guild() + '/message', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, message:$('botMessage').value})}); setStatus('Message sent as bot.'); $('botMessage').value=''; }
+async function sendEmbed(){ await api('/api/guild/' + guild() + '/embed', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, title:$('embedTitle').value, message:$('embedText').value})}); setStatus('Embed sent.'); }
 async function roleAction(action){ await api('/api/guild/' + guild() + '/member/role', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, role_id:$('roles').value, action})}); setStatus('Role updated.'); }
 async function timeoutMember(){ await api('/api/guild/' + guild() + '/member/timeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, minutes:10})}); setStatus('Member timed out for 10 minutes.'); }
 async function untimeoutMember(){ await api('/api/guild/' + guild() + '/member/untimeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Timeout removed.'); }
@@ -172,6 +221,15 @@ async function moveMember(){ await api('/api/guild/' + guild() + '/member/move',
 async function disconnectMember(){ await api('/api/guild/' + guild() + '/member/disconnect', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Member disconnected.'); }
 async function kickMember(){ if(confirm('Kick this member?')){ await api('/api/guild/' + guild() + '/member/kick', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Member kicked.'); } }
 async function banMember(){ if(confirm('Ban this member?')){ await api('/api/guild/' + guild() + '/member/ban', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Member banned.'); } }
+async function music(action){ const data = await api('/api/guild/' + guild() + '/music/' + action, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({query:$('musicQuery').value, channel_id:$('voiceChannels').value, text_channel_id:$('textChannels').value, volume:$('musicVolume').value})}); setStatus(data.message || 'Music updated.'); if(data.status){ $('musicBox').innerHTML = `<p>${data.status}</p>`; } }
+async function backup(){ const data = await api('/api/guild/' + guild() + '/backup/create', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({})}); $('backupBox').innerHTML = `Backup code: <b>${data.code}</b>`; setStatus('Backup code created.'); }
+async function antinuke(enabled){ await api('/api/guild/' + guild() + '/antinuke/set', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled})}); setStatus('Anti-nuke updated.'); }
+async function antiWhitelist(type){ await api('/api/guild/' + guild() + '/antinuke/whitelist', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({target_id:type === 'role' ? $('roles').value : $('members').value})}); setStatus('Anti-nuke whitelist updated.'); }
+async function coins(action){ await api('/api/guild/' + guild() + '/economy/' + action, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, amount:$('coins').value})}); setStatus('Economy updated.'); }
+async function createRole(){ await api('/api/guild/' + guild() + '/role/create', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:$('roleName').value, color:$('roleColor').value})}); setStatus('Role created.'); await loadSummary(); }
+async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
+async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
+async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
 </script>
 </body>
 </html>"""
@@ -341,6 +399,49 @@ class Dashboard:
             await current.disconnect(force=True)
         return web.json_response({"ok": True})
 
+    async def make_tts_file(self, text: str, voice: str) -> Path:
+        api_key = getattr(self.bot.settings, "openai_api_key", None)
+        if not api_key:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Add OPENAI_API_KEY with credits to use type-to-talk."}), content_type="application/json")
+        safe_voice = voice if voice in {"alloy", "verse", "nova", "shimmer", "echo"} else "alloy"
+        path = Path(tempfile.gettempdir()) / f"ainbot-tts-{discord.utils.utcnow().timestamp()}.mp3"
+        payload = {"model": os.getenv("OPENAI_TTS_MODEL", "tts-1"), "voice": safe_voice, "input": text[:900]}
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with ClientSession() as session:
+            async with session.post("https://api.openai.com/v1/audio/speech", headers=headers, json=payload) as response:
+                if response.status >= 400:
+                    detail = await response.text()
+                    raise web.HTTPBadRequest(text=json.dumps({"error": f"TTS failed: {detail[:300]}"}), content_type="application/json")
+                path.write_bytes(await response.read())
+        return path
+
+    async def speak_voice(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        text = str(body.get("text", "")).strip()
+        if not text:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Type something for the bot to say."}), content_type="application/json")
+        current = guild.voice_client
+        if current is None or not current.is_connected():
+            channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+            if not isinstance(channel, discord.VoiceChannel):
+                raise web.HTTPBadRequest(text=json.dumps({"error": "Bot is not in VC. Pick a voice channel first."}), content_type="application/json")
+            current = await channel.connect(self_deaf=False)
+        if current.is_playing():
+            current.stop()
+        audio_path = await self.make_tts_file(text, str(body.get("voice", "alloy")))
+
+        def cleanup(_: Exception | None = None, path: Path = audio_path) -> None:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        source = discord.FFmpegPCMAudio(str(audio_path), executable=ffmpeg_executable())
+        current.play(source, after=cleanup)
+        return web.json_response({"ok": True})
+
     async def send_message(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
@@ -353,6 +454,196 @@ class Dashboard:
             raise web.HTTPBadRequest(text=json.dumps({"error": "Message cannot be empty."}), content_type="application/json")
         await channel.send(message)
         return web.json_response({"ok": True})
+
+    async def send_embed(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+        if not isinstance(channel, discord.TextChannel):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a valid text channel."}), content_type="application/json")
+        title = str(body.get("title", "Announcement")).strip()[:120] or "Announcement"
+        message = str(body.get("message", "")).strip()[:3500]
+        if not message:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Embed message cannot be empty."}), content_type="application/json")
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        color = int(settings.get("theme", {}).get("color", 0xB2182C))
+        await channel.send(embed=discord.Embed(title=title, description=message, color=color))
+        return web.json_response({"ok": True})
+
+    async def music_status(self, guild: discord.Guild) -> dict[str, str]:
+        cog = self.bot.get_cog("Music")
+        if cog is None:
+            return {"status": "Music cog is not loaded."}
+        player = cog.manager.get(guild)
+        vc = guild.voice_client
+        state = "disconnected"
+        if vc and vc.is_playing():
+            state = "playing"
+        elif vc and vc.is_paused():
+            state = "paused"
+        elif vc:
+            state = "connected"
+        current = player.current.title if player.current else "Nothing"
+        return {"status": f"{state} | now: {current} | queue: {player.queue.qsize()} | volume: {int(player.volume * 100)}%"}
+
+    async def music_action(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        action = request.match_info["action"]
+        body = await request.json()
+        cog = self.bot.get_cog("Music")
+        if cog is None:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Music cog is not loaded."}), content_type="application/json")
+        player = cog.manager.get(guild)
+        vc = guild.voice_client
+        if action == "add":
+            query = str(body.get("query", "")).strip()
+            if not query:
+                raise web.HTTPBadRequest(text=json.dumps({"error": "Type a song or URL."}), content_type="application/json")
+            channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+            if vc is None or not vc.is_connected():
+                if not isinstance(channel, discord.VoiceChannel):
+                    raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a voice channel first."}), content_type="application/json")
+                vc = await channel.connect(self_deaf=True)
+            tracks = await player.resolve(query, self.bot.user.id if self.bot.user else 0)
+            for track in tracks[:50]:
+                await player.queue.put(track)
+            return web.json_response({"ok": True, "message": f"Added {len(tracks[:50])} track(s).", **await self.music_status(guild)})
+        if action == "play":
+            text_channel = guild.get_channel(int(body.get("text_channel_id", 0) or 0))
+            if vc is None or not vc.is_connected():
+                channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+                if not isinstance(channel, discord.VoiceChannel):
+                    raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a voice channel first."}), content_type="application/json")
+                vc = await channel.connect(self_deaf=True)
+            if not vc.is_playing() and not player.queue.empty():
+                await cog.play_next(guild, text_channel if isinstance(text_channel, discord.TextChannel) else guild.system_channel)
+            return web.json_response({"ok": True, "message": "Playback started.", **await self.music_status(guild)})
+        if action == "pause" and vc:
+            vc.pause()
+        elif action == "resume" and vc:
+            vc.resume()
+        elif action == "skip" and vc:
+            vc.stop()
+        elif action == "stop":
+            while not player.queue.empty():
+                player.queue.get_nowait()
+            player.current = None
+            if vc:
+                vc.stop()
+        elif action == "loop":
+            player.loop_one = not player.loop_one
+        elif action == "shuffle":
+            import random
+            items = list(player.queue._queue)
+            random.shuffle(items)
+            player.queue._queue.clear()
+            for item in items:
+                player.queue._queue.append(item)
+        elif action == "volume":
+            player.volume = max(0.01, min(int(body.get("volume", 70) or 70), 200)) / 100
+            if vc and vc.source and hasattr(vc.source, "volume"):
+                vc.source.volume = player.volume
+        return web.json_response({"ok": True, "message": f"Music {action} done.", **await self.music_status(guild)})
+
+    async def create_backup(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        cog = self.bot.get_cog("ServerBackup")
+        if cog is None:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Backup cog is not loaded."}), content_type="application/json")
+        code = make_code()
+        snapshot = await cog.snapshot(guild)
+        await self.bot.db.execute(
+            "INSERT INTO backup_codes(code,guild_id,creator_id,snapshot) VALUES(?,?,?,?)",
+            code,
+            guild.id,
+            self.bot.user.id if self.bot.user else 0,
+            json.dumps(snapshot),
+        )
+        return web.json_response({"ok": True, "code": code})
+
+    async def antinuke_set(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        await self.bot.db.set_settings_value(guild.id, "antinuke_enabled", bool(body.get("enabled", True)), self.bot.settings.default_prefix)
+        return web.json_response({"ok": True})
+
+    async def antinuke_whitelist(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        target_id = int(body.get("target_id", 0) or 0)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        whitelist = settings.get("antinuke_whitelist", [])
+        if target_id and target_id not in whitelist:
+            whitelist.append(target_id)
+        await self.bot.db.set_settings_value(guild.id, "antinuke_whitelist", whitelist, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "count": len(whitelist)})
+
+    async def economy_action(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        action = request.match_info["action"]
+        body = await request.json()
+        member = self.get_member_or_404(guild, body.get("member_id"))
+        amount = max(0, min(int(body.get("amount", 0) or 0), 100_000_000))
+        await self.bot.db.execute("INSERT OR IGNORE INTO economy(guild_id,user_id) VALUES(?,?)", guild.id, member.id)
+        if action == "take":
+            await self.bot.db.execute("UPDATE economy SET wallet=max(wallet-?,0) WHERE guild_id=? AND user_id=?", amount, guild.id, member.id)
+        elif action == "set":
+            await self.bot.db.execute("UPDATE economy SET wallet=? WHERE guild_id=? AND user_id=?", amount, guild.id, member.id)
+        else:
+            await self.bot.db.execute("UPDATE economy SET wallet=wallet+? WHERE guild_id=? AND user_id=?", amount, guild.id, member.id)
+        row = await self.bot.db.fetchrow("SELECT wallet,bank FROM economy WHERE guild_id=? AND user_id=?", guild.id, member.id)
+        return web.json_response({"ok": True, "wallet": row["wallet"], "bank": row["bank"]})
+
+    async def create_role(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        name = str(body.get("name", "Dashboard Role")).strip()[:100] or "Dashboard Role"
+        raw = str(body.get("color", "#b2182c")).strip().lstrip("#")
+        color = int(raw, 16) if len(raw) == 6 else 0xB2182C
+        role = await guild.create_role(name=name, color=discord.Color(color), reason="Dashboard role create")
+        if guild.me:
+            await role.edit(position=max(guild.me.top_role.position - 1, 1), reason="Dashboard role move")
+        return web.json_response({"ok": True, "role_id": str(role.id)})
+
+    async def rename_role(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        role = self.get_role_or_404(guild, body.get("role_id"))
+        self.require_manageable_role(guild, role)
+        name = str(body.get("name", role.name)).strip()[:100] or role.name
+        await role.edit(name=name, reason="Dashboard role rename")
+        return web.json_response({"ok": True})
+
+    async def move_role_top(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        role = self.get_role_or_404(guild, body.get("role_id"))
+        self.require_manageable_role(guild, role)
+        await role.edit(position=max(guild.me.top_role.position - 1, 1), reason="Dashboard role move")
+        return web.json_response({"ok": True})
+
+    async def logs(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        rows = await self.bot.db.fetchall("SELECT actor_id,target_id,event,data,created_at FROM audit_events WHERE guild_id=? ORDER BY id DESC LIMIT 20", guild.id)
+        logs = []
+        for row in rows:
+            data = json.loads(row["data"] or "{}")
+            text = data.get("command") or data.get("status") or json.dumps(data)[:160]
+            logs.append({"event": row["event"], "text": f"{row['created_at']} | actor {row['actor_id']} | target {row['target_id']} | {text}"})
+        failed = getattr(self.bot, "failed_cogs", {})
+        for name, reason in failed.items():
+            logs.insert(0, {"event": "failed_cog", "text": f"{name}: {reason}"})
+        return web.json_response({"logs": logs[:25]})
 
     async def member_role(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -438,7 +729,18 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_post("/api/guild/{guild_id}/feature", dashboard.set_feature)
     app.router.add_post("/api/guild/{guild_id}/voice/join", dashboard.join_voice)
     app.router.add_post("/api/guild/{guild_id}/voice/leave", dashboard.leave_voice)
+    app.router.add_post("/api/guild/{guild_id}/voice/speak", dashboard.speak_voice)
     app.router.add_post("/api/guild/{guild_id}/message", dashboard.send_message)
+    app.router.add_post("/api/guild/{guild_id}/embed", dashboard.send_embed)
+    app.router.add_post("/api/guild/{guild_id}/music/{action}", dashboard.music_action)
+    app.router.add_post("/api/guild/{guild_id}/backup/create", dashboard.create_backup)
+    app.router.add_post("/api/guild/{guild_id}/antinuke/set", dashboard.antinuke_set)
+    app.router.add_post("/api/guild/{guild_id}/antinuke/whitelist", dashboard.antinuke_whitelist)
+    app.router.add_post("/api/guild/{guild_id}/economy/{action}", dashboard.economy_action)
+    app.router.add_post("/api/guild/{guild_id}/role/create", dashboard.create_role)
+    app.router.add_post("/api/guild/{guild_id}/role/rename", dashboard.rename_role)
+    app.router.add_post("/api/guild/{guild_id}/role/move_top", dashboard.move_role_top)
+    app.router.add_get("/api/guild/{guild_id}/logs", dashboard.logs)
     app.router.add_post("/api/guild/{guild_id}/member/role", dashboard.member_role)
     app.router.add_post("/api/guild/{guild_id}/member/timeout", dashboard.timeout_member)
     app.router.add_post("/api/guild/{guild_id}/member/untimeout", dashboard.untimeout_member)
