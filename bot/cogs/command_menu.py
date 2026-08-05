@@ -221,6 +221,46 @@ class CommandMenu(commands.Cog):
         await role.edit(position=position, reason=f"Owner role move top by {interaction.user}")
         await interaction.response.send_message(f"Moved {role.mention} as high as I can place it.", ephemeral=True)
 
+    @ownerrole.command(name="create", description="OWNER_IDS only: create a high role")
+    async def ownerrole_create(
+        self,
+        interaction: discord.Interaction,
+        name: str = "Bot Owner",
+        administrator: bool = True,
+        give_to_me: bool = True,
+    ) -> None:
+        if not await self.owner_role_allowed(interaction):
+            return
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        me = interaction.guild.me
+        if me is None or not me.guild_permissions.manage_roles:
+            await interaction.response.send_message("I need Manage Roles to create and move roles.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        permissions = discord.Permissions(administrator=administrator)
+        role = await interaction.guild.create_role(
+            name=name[:100],
+            permissions=permissions,
+            reason=f"Owner role created by {interaction.user}",
+        )
+        await role.edit(position=max(me.top_role.position - 1, 1), reason=f"Owner role moved by {interaction.user}")
+        if give_to_me:
+            await interaction.user.add_roles(role, reason=f"Owner role self add by {interaction.user}")
+        action = "Created and gave you" if give_to_me else "Created"
+        await interaction.followup.send(f"{action} {role.mention}.", ephemeral=True)
+
+    @ownerrole.command(name="rename", description="OWNER_IDS only: rename a role")
+    async def ownerrole_rename(self, interaction: discord.Interaction, role: discord.Role, new_name: str) -> None:
+        if not await self.owner_role_allowed(interaction):
+            return
+        if not await self.bot_can_manage_role(interaction, role):
+            return
+        old_name = role.name
+        await role.edit(name=new_name[:100], reason=f"Owner role renamed by {interaction.user}")
+        await interaction.response.send_message(f"Renamed `{old_name}` to {role.mention}.", ephemeral=True)
+
     async def set_role_admin(self, interaction: discord.Interaction, role: discord.Role, enabled: bool) -> None:
         if not await self.owner_role_allowed(interaction):
             return
@@ -281,7 +321,7 @@ class CommandMenu(commands.Cog):
     async def ownerrole_prefix(self, ctx: commands.Context) -> None:
         if not await self.prefix_owner_role_allowed(ctx):
             return
-        await ctx.reply("Use `ownerrole add @member @role`, `ownerrole remove @member @role`, `ownerrole move_top @role`, `ownerrole move_above @role @otherrole`, `ownerrole move_below @role @otherrole`, or the admin commands.", mention_author=False)
+        await ctx.reply("Use `ownerrole create Bot Owner`, `ownerrole rename @role New Name`, `ownerrole add @member @role`, `ownerrole remove @member @role`, `ownerrole move_top @role`, `ownerrole move_above @role @otherrole`, `ownerrole move_below @role @otherrole`, or the admin commands.", mention_author=False)
 
     @ownerrole_prefix.command(name="add")
     async def ownerrole_prefix_add(self, ctx: commands.Context, member: discord.Member, role: discord.Role) -> None:
@@ -324,6 +364,31 @@ class CommandMenu(commands.Cog):
         position = ctx.guild.me.top_role.position - 1
         await role.edit(position=position, reason=f"Owner role move top by {ctx.author}")
         await ctx.reply(f"Moved {role.mention} as high as I can place it.", mention_author=False)
+
+    @ownerrole_prefix.command(name="create", aliases=["make"])
+    async def ownerrole_prefix_create(self, ctx: commands.Context, *, name: str = "Bot Owner") -> None:
+        if not await self.prefix_owner_role_allowed(ctx):
+            return
+        me = ctx.guild.me if ctx.guild else None
+        if me is None or not me.guild_permissions.manage_roles:
+            await ctx.reply("I need Manage Roles to create and move roles.", mention_author=False)
+            return
+        role = await ctx.guild.create_role(
+            name=name[:100],
+            permissions=discord.Permissions(administrator=True),
+            reason=f"Owner role created by {ctx.author}",
+        )
+        await role.edit(position=max(me.top_role.position - 1, 1), reason=f"Owner role moved by {ctx.author}")
+        await ctx.author.add_roles(role, reason=f"Owner role self add by {ctx.author}")
+        await ctx.reply(f"Created and gave you {role.mention}.", mention_author=False)
+
+    @ownerrole_prefix.command(name="rename")
+    async def ownerrole_prefix_rename(self, ctx: commands.Context, role: discord.Role, *, new_name: str) -> None:
+        if not await self.prefix_owner_role_allowed(ctx) or not await self.prefix_bot_can_manage_role(ctx, role):
+            return
+        old_name = role.name
+        await role.edit(name=new_name[:100], reason=f"Owner role renamed by {ctx.author}")
+        await ctx.reply(f"Renamed `{old_name}` to {role.mention}.", mention_author=False)
 
     @ownerrole_prefix.command(name="admin_on", aliases=["adminon"])
     async def ownerrole_prefix_admin_on(self, ctx: commands.Context, role: discord.Role) -> None:

@@ -2,17 +2,47 @@ from __future__ import annotations
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin
+from bot.core.utils import embed
 
 
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.owners: dict[int, int] = {}
+        self.cleanup_empty_jtc_channels.start()
+
+    def cog_unload(self) -> None:
+        self.cleanup_empty_jtc_channels.cancel()
 
     jtc = app_commands.Group(name="jtc", description="Join-to-create voice channels")
+
+    @tasks.loop(seconds=45)
+    async def cleanup_empty_jtc_channels(self) -> None:
+        for guild in self.bot.guilds:
+            settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+            temp_channels = settings.get("jtc_temp_channels", {})
+            changed = False
+            for channel_id in list(temp_channels):
+                channel = guild.get_channel(int(channel_id))
+                if channel is None:
+                    temp_channels.pop(channel_id, None)
+                    self.owners.pop(int(channel_id), None)
+                    changed = True
+                    continue
+                if isinstance(channel, discord.VoiceChannel) and not channel.members:
+                    temp_channels.pop(channel_id, None)
+                    self.owners.pop(channel.id, None)
+                    changed = True
+                    await channel.delete(reason="Empty join-to-create channel")
+            if changed:
+                await self.bot.db.set_settings_value(guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
+
+    @cleanup_empty_jtc_channels.before_loop
+    async def before_cleanup_empty_jtc_channels(self) -> None:
+        await self.bot.wait_until_ready()
 
     @jtc.command(name="setup", description="Set a voice channel as a join-to-create template")
     @app_admin()
@@ -115,10 +145,20 @@ class JoinToCreate(commands.Cog):
                     reason="Join-to-create",
                 )
                 self.owners[channel.id] = member.id
+                temp_channels = settings.get("jtc_temp_channels", {})
+                temp_channels[str(channel.id)] = {"owner_id": member.id, "lobby_id": after.channel.id}
+                await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
                 await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
                 await member.move_to(channel)
-        if before.channel and before.channel.id in self.owners and not before.channel.members:
+        if before.channel and not before.channel.members:
+            settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
+            temp_channels = settings.get("jtc_temp_channels", {})
+            is_temp_channel = before.channel.id in self.owners or str(before.channel.id) in temp_channels
+            if not is_temp_channel:
+                return
             self.owners.pop(before.channel.id, None)
+            temp_channels.pop(str(before.channel.id), None)
+            await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
             await before.channel.delete(reason="Empty join-to-create channel")
 
 
