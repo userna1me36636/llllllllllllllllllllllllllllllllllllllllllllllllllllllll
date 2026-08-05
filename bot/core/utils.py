@@ -10,22 +10,63 @@ from typing import Iterable
 import discord
 
 
-DEFAULT_COLOR = discord.Color.from_rgb(118, 72, 255)
+DEFAULT_COLOR = discord.Color.from_rgb(170, 22, 38)
 DARK_PURPLE = discord.Color.from_rgb(39, 18, 76)
 LIGHT_PURPLE = discord.Color.from_rgb(183, 151, 255)
 WHITE = discord.Color.from_rgb(245, 242, 255)
+GLASS_RED = discord.Color.from_rgb(170, 22, 38)
+DEEP_RED = discord.Color.from_rgb(55, 8, 14)
 PURPLE_LINES = (
-    "midnight purple",
-    "violet glow",
-    "royal pulse",
-    "neon lavender",
-    "shadow violet",
+    "red glass",
+    "white outline",
+    "crimson mist",
+    "soft red glow",
+    "frosted frame",
+)
+GLOW_BARS = (
+    "[=---------]",
+    "[===-------]",
+    "[=====-----]",
+    "[=======---]",
+    "[========= ]",
+    "[---=======]",
+    "[-----=====]",
+    "[-------===]",
+)
+SPARK_LINES = (
+    "/\\  /\\  /\\",
+    "--==--==--",
+    "<<<<>>>>",
+    "///|||\\\\\\",
+    "==--==--==",
 )
 
 
 def embed(title: str, description: str | None = None, color: discord.Color = DEFAULT_COLOR) -> discord.Embed:
     e = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
     e.set_footer(text=f"AinBot | {random.choice(PURPLE_LINES)}")
+    return e
+
+
+def glow_bar() -> str:
+    return random.choice(GLOW_BARS)
+
+
+def spark_line() -> str:
+    return random.choice(SPARK_LINES)
+
+
+def flash_text(label: str = "live") -> str:
+    return f"`{label}` {glow_bar()} {random.choice(PURPLE_LINES)}"
+
+
+def style_embed(e: discord.Embed, *, banner_url: str | None = None, thumbnail_url: str | None = None, flashy: bool = True) -> discord.Embed:
+    if flashy:
+        e.add_field(name="Glass Frame", value=f"white outline // barely red glass\n{spark_line()}\n{flash_text('pulse')}", inline=False)
+    if banner_url:
+        e.set_image(url=banner_url)
+    if thumbnail_url:
+        e.set_thumbnail(url=thumbnail_url)
     return e
 
 
@@ -38,22 +79,27 @@ def parse_color(value: str) -> discord.Color:
         "lightpurple": LIGHT_PURPLE,
         "light_purple": LIGHT_PURPLE,
         "white": WHITE,
+        "red": GLASS_RED,
+        "glassred": GLASS_RED,
+        "glass_red": GLASS_RED,
+        "deepred": DEEP_RED,
+        "deep_red": DEEP_RED,
     }
     if value.strip().lower() in named:
         return named[value.strip().lower()]
     if not re.fullmatch(r"[0-9a-f]{6}", cleaned):
-        raise ValueError("Use a hex color like #7648ff, or purple, darkpurple, lightpurple, white.")
+        raise ValueError("Use a hex color like #aa1626, or red, glassred, deepred, white.")
     return discord.Color(int(cleaned, 16))
 
 
 def pulse_line() -> str:
     return random.choice(
         (
-            "`midnight` violet lighting online",
-            "`glow` interface refreshed",
-            "`pulse` purple detail active",
-            "`shine` clean panel mode",
-            "`aura` server style upgraded",
+            f"`glass` red panel online {glow_bar()}",
+            f"`outline` white frame refreshed {spark_line()}",
+            f"`pulse` crimson detail active {glow_bar()}",
+            f"`shine` frosted button mode {spark_line()}",
+            f"`aura` red glass interface upgraded {glow_bar()}",
         )
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import discord
@@ -7,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin
-from bot.core.utils import DEFAULT_COLOR, embed, pulse_line
+from bot.core.utils import DEFAULT_COLOR, embed, pulse_line, style_embed
 
 
 class JtcRenameModal(discord.ui.Modal):
@@ -50,6 +51,21 @@ class JtcControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.channel_id = channel_id
+        glass_labels = {
+            "Claim": "Glass Claim",
+            "Boost Bitrate": "Glass Bitrate",
+            "Boost Privacy": "Glass Privacy",
+            "Play Music": "Glass Music",
+            "Purple Pulse": "Glass Pulse",
+        }
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                if item.label in glass_labels:
+                    item.label = glass_labels[item.label]
+                if item.style in {discord.ButtonStyle.primary, discord.ButtonStyle.success}:
+                    item.style = discord.ButtonStyle.secondary
+                if item.label in {"Glass Claim", "Unlock", "Glass Bitrate", "Glass Privacy", "Glass Music", "Glass Pulse"}:
+                    item.emoji = None
 
     async def channel(self, interaction: discord.Interaction) -> discord.VoiceChannel | None:
         if interaction.guild is None:
@@ -163,6 +179,9 @@ class JoinToCreate(commands.Cog):
         self.bot = bot
         self.owners: dict[int, int] = {}
         self.theme_colors: dict[int, int] = {}
+        self.theme_options: dict[int, dict] = {}
+        self.panel_messages: dict[int, int] = {}
+        self.panel_sent_at: dict[int, float] = {}
         self.cleanup_empty_jtc_channels.start()
 
     def cog_unload(self) -> None:
@@ -202,6 +221,7 @@ class JoinToCreate(commands.Cog):
 
     async def load_theme(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        self.theme_options[guild.id] = settings.get("theme", {})
         color = settings.get("theme", {}).get("color")
         if color:
             self.theme_colors[guild.id] = int(color)
@@ -216,18 +236,22 @@ class JoinToCreate(commands.Cog):
         return discord.Color(int(cached)) if cached else DEFAULT_COLOR
 
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
-        e = embed("Voice Control Panel", f"{pulse_line()}\n\nOwner: {owner.mention}\nUse the buttons below to control {channel.mention}.", self.theme_color(channel.guild))
+        theme = self.theme_options.get(channel.guild.id, {})
+        e = embed("Voice Glass Panel", f"{pulse_line()}\n\nOwner: {owner.mention}\nUse the frosted controls below to control {channel.mention}.", self.theme_color(channel.guild))
         e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
         e.add_field(name="Booster Perks", value="Boost Bitrate and Boost Privacy are booster-only VC tools. Mods can use them too.", inline=False)
         e.add_field(name="Music", value="Press Play Music to bring the bot into this VC and open the music panel.", inline=False)
-        e.add_field(name="Style", value="Purple Pulse refreshes the interface glow for this VC.", inline=False)
-        e.set_footer(text="AinBot JTC | clean purple interface")
-        return e
+        e.add_field(name="Style", value="Glass Pulse refreshes the red glass frame for this VC.", inline=False)
+        if theme.get("effects", True):
+            e.add_field(name="Live Detail", value="Barely translucent red background feel, white outline wording, and a glass-frame banner slot from `/theme banner`.", inline=False)
+        e.set_footer(text="AinBot JTC | red glass interface")
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     def pulse_embed(self, guild: discord.Guild | None) -> discord.Embed:
-        e = embed("Purple Pulse", pulse_line(), self.theme_color(guild))
-        e.add_field(name="VC Interface", value="This temp VC panel is using the server theme.", inline=False)
-        return e
+        theme = self.theme_options.get(guild.id, {}) if guild else {}
+        e = embed("Glass Pulse", pulse_line(), self.theme_color(guild))
+        e.add_field(name="VC Interface", value="This temp VC panel is using the red glass server theme.", inline=False)
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     async def start_music_panel(self, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
         if not isinstance(interaction.user, discord.Member):
@@ -297,11 +321,29 @@ class JoinToCreate(commands.Cog):
             pass
 
     async def send_control_panel(self, channel: discord.VoiceChannel, owner: discord.Member) -> None:
+        now = time.time()
+        if now - self.panel_sent_at.get(channel.id, 0) < 8:
+            return
+        self.panel_sent_at[channel.id] = now
+        await asyncio.sleep(0.8)
+        await self.load_theme(channel.guild)
+        embed_obj = self.control_embed(channel, owner)
+        view = JtcControlView(self, channel.id)
         try:
-            await self.load_theme(channel.guild)
-            await channel.send(content=owner.mention, embed=self.control_embed(channel, owner), view=JtcControlView(self, channel.id))
+            old_message_id = self.panel_messages.get(channel.id)
+            if old_message_id:
+                try:
+                    old_message = await channel.fetch_message(old_message_id)
+                    await old_message.delete()
+                except discord.HTTPException:
+                    pass
+            message = await channel.send(content=owner.mention, embed=embed_obj, view=view)
+            self.panel_messages[channel.id] = message.id
         except discord.HTTPException:
-            pass
+            try:
+                await owner.send(embed=embed("JTC Panel Could Not Open", f"I created {channel.mention}, but I could not post the control panel inside its chat. Give me **Send Messages**, **Embed Links**, and **Use External Apps** in that VC/category."))
+            except discord.HTTPException:
+                pass
 
     @tasks.loop(seconds=45)
     async def cleanup_empty_jtc_channels(self) -> None:
@@ -436,6 +478,11 @@ class JoinToCreate(commands.Cog):
                 await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
                 await member.move_to(channel)
                 await self.send_control_panel(channel, member)
+            elif str(after.channel.id) in settings.get("jtc_temp_channels", {}):
+                saved = settings.get("jtc_temp_channels", {}).get(str(after.channel.id), {})
+                owner_id = self.owners.get(after.channel.id) or saved.get("owner_id")
+                if owner_id == member.id:
+                    await self.send_control_panel(after.channel, member)
         if before.channel and not before.channel.members:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             temp_channels = settings.get("jtc_temp_channels", {})
@@ -443,6 +490,8 @@ class JoinToCreate(commands.Cog):
             if not is_temp_channel:
                 return
             self.owners.pop(before.channel.id, None)
+            self.panel_messages.pop(before.channel.id, None)
+            self.panel_sent_at.pop(before.channel.id, None)
             temp_channels.pop(str(before.channel.id), None)
             await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
             await before.channel.delete(reason="Empty join-to-create channel")

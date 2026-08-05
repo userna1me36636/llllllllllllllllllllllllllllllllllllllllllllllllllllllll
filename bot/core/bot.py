@@ -13,26 +13,10 @@ from bot.core.logging import setup_logging
 
 
 COGS: tuple[str, ...] = (
-    "bot.cogs.help",
     "bot.cogs.admin",
-    "bot.cogs.moderation",
-    "bot.cogs.automod",
-    "bot.cogs.antinuke",
-    "bot.cogs.godmode",
+    "bot.cogs.vc_music_tools",
     "bot.cogs.jointocreate",
     "bot.cogs.music",
-    "bot.cogs.tickets",
-    "bot.cogs.roles",
-    "bot.cogs.welcome",
-    "bot.cogs.leveling",
-    "bot.cogs.giveaways",
-    "bot.cogs.economy",
-    "bot.cogs.utility",
-    "bot.cogs.event_logging",
-    "bot.cogs.command_menu",
-    "bot.cogs.ai_chat",
-    "bot.cogs.vouch",
-    "bot.cogs.server_backup",
 )
 
 
@@ -41,6 +25,8 @@ async def dynamic_prefix(bot: "AllInOneBot", message: discord.Message) -> Iterab
         return commands.when_mentioned_or(bot.settings.default_prefix)(bot, message)
     settings = await bot.db.get_settings(message.guild.id, bot.settings.default_prefix)
     prefixes = list(settings.get("prefixes") or [settings.get("prefix", bot.settings.default_prefix)])
+    if bot.settings.default_prefix not in prefixes:
+        prefixes.insert(0, bot.settings.default_prefix)
     overrides = settings.get("command_prefix_overrides", {})
     for command_prefixes in overrides.values():
         for prefix in command_prefixes:

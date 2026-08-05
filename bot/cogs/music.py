@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import configured_owner
-from bot.core.utils import DEFAULT_COLOR, embed, progress_bar, pulse_line
+from bot.core.utils import DEFAULT_COLOR, embed, progress_bar, pulse_line, style_embed
 from bot.services.music import MusicManager, Track, ffmpeg_candidates
 from bot.services.music_helpers import MusicHelperManager
 
@@ -31,15 +31,15 @@ class MusicControls(discord.ui.View):
         self.cog = cog
         self.guild_id = guild_id
 
-    @discord.ui.button(label="Add Song", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Glass Add", style=discord.ButtonStyle.secondary)
     async def add_song(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(MusicSearchModal(self.cog, self.guild_id))
 
-    @discord.ui.button(label="Play", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Glass Play", style=discord.ButtonStyle.secondary)
     async def play_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog.start_playback(interaction)
 
-    @discord.ui.button(label="Pause/Resume", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Pause / Resume", style=discord.ButtonStyle.secondary)
     async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         vc = interaction.guild.voice_client if interaction.guild else None
         if vc and vc.is_playing():
@@ -66,7 +66,7 @@ class MusicControls(discord.ui.View):
         vc.stop()
         await interaction.response.send_message("Going back to the previous song.", ephemeral=True)
 
-    @discord.ui.button(label="Skip", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         vc = interaction.guild.voice_client if interaction.guild else None
         if vc:
@@ -102,7 +102,7 @@ class MusicControls(discord.ui.View):
             return
         await interaction.response.send_message(embed=self.cog.song_info_embed(track), ephemeral=True)
 
-    @discord.ui.button(label="Pulse", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Glass Pulse", style=discord.ButtonStyle.secondary)
     async def pulse(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_message(embed=self.cog.pulse_embed(interaction.guild), ephemeral=True)
         await self.cog.refresh_panel(interaction.guild)
@@ -129,6 +129,7 @@ class Music(commands.Cog):
         self.previous_tracks: dict[int, Track] = {}
         self.playback_attempts: dict[int, int] = {}
         self.theme_colors: dict[int, int] = {}
+        self.theme_options: dict[int, dict] = {}
         self.helpers = MusicHelperManager()
         self.bot.loop.create_task(self.helpers.start())
 
@@ -151,6 +152,7 @@ class Music(commands.Cog):
     async def load_theme(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
         color = settings.get("theme", {}).get("color")
+        self.theme_options[guild.id] = settings.get("theme", {})
         if color:
             self.theme_colors[guild.id] = int(color)
             colors = getattr(self.bot, "theme_colors", {})
@@ -165,6 +167,7 @@ class Music(commands.Cog):
 
     def panel_embed(self, guild: discord.Guild) -> discord.Embed:
         player = self.manager.get(guild)
+        theme = self.theme_options.get(guild.id, {})
         vc = guild.voice_client
         current = player.current
         state = "Disconnected"
@@ -174,7 +177,7 @@ class Music(commands.Cog):
             state = "Paused"
         elif vc:
             state = "Connected"
-        description = f"{pulse_line()}\n\nAdd songs to the queue, then press Play to start them."
+        description = f"{pulse_line()}\n\nFrosted red glass music interface with a clean white-frame feel.\nAdd songs to the queue, then press Glass Play to start them."
         e = embed("Music Panel", description, self.theme_color(guild))
         e.add_field(name="Status", value=state, inline=True)
         e.add_field(name="Volume", value=f"{int(player.volume * 100)}%", inline=True)
@@ -190,9 +193,11 @@ class Music(commands.Cog):
         queue_items = list(player.queue._queue)[:5]
         queue_text = "\n".join(f"`{i}.` {track.title[:80]}" for i, track in enumerate(queue_items, start=1))
         e.add_field(name="Up Next", value=queue_text or "Queue is empty.", inline=False)
-        e.add_field(name="Interface Detail", value="Purple pulse controls are active. Press Pulse to refresh the style line.", inline=False)
-        e.set_footer(text="AinBot music | clean purple interface")
-        return e
+        e.add_field(name="Interface Detail", value="Red glass controls are active. Press Glass Pulse to refresh the frame.", inline=False)
+        if theme.get("effects", True):
+            e.add_field(name="Live Glow", value="Barely translucent red styling, white outline text, and changing frame lines. Use `/theme banner` for a matching GIF banner.", inline=False)
+        e.set_footer(text="AinBot music | red glass interface")
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     def song_info_embed(self, track: Track) -> discord.Embed:
         duration = "Unknown"
@@ -209,12 +214,13 @@ class Music(commands.Cog):
             e.add_field(name="Playback Mode", value="Temp download fallback", inline=True)
         if track.thumbnail:
             e.set_thumbnail(url=track.thumbnail)
-        return e
+        return style_embed(e, flashy=True)
 
     def pulse_embed(self, guild: discord.Guild | None) -> discord.Embed:
-        e = embed("Purple Pulse", pulse_line(), self.theme_color(guild))
-        e.add_field(name="Glow", value="Music panel refreshed with the server theme.", inline=False)
-        return e
+        theme = self.theme_options.get(guild.id, {}) if guild else {}
+        e = embed("Glass Pulse", pulse_line(), self.theme_color(guild))
+        e.add_field(name="Glow", value="Music panel refreshed with the red glass frame.", inline=False)
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     async def send_or_update_panel(self, guild: discord.Guild, channel: discord.abc.Messageable) -> None:
         await self.load_theme(guild)
