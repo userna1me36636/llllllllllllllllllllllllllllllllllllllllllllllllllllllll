@@ -1,0 +1,15 @@
+Upload the ITEMS inside this folder to GitHub:
+
+bot
+.gitignore
+nixpacks.toml
+Procfile
+README.md
+requirements.txt
+runtime.txt
+start.sh
+
+Do not upload .env, data, logs, or __pycache__.
+
+If GitHub's upload screen lists files from inside bot, that is normal while uploading.
+After you press Commit, the repository should show a bot folder at the top level.

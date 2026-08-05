@@ -32,6 +32,21 @@ class Economy(commands.Cog):
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
         return settings.get("theme", {})
 
+    async def shop_items(self, guild_id: int) -> dict[str, dict]:
+        settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
+        items = {
+            name: {"price": price, "description": "Default shop item.", "role_id": 0}
+            for name, price in SHOP.items()
+        }
+        for name, data in settings.get("economy_shop", {}).items():
+            if isinstance(data, dict):
+                items[name.lower()] = {
+                    "price": int(data.get("price", 0) or 0),
+                    "description": str(data.get("description", "Custom shop item."))[:300],
+                    "role_id": int(data.get("role_id", 0) or 0),
+                }
+        return items
+
     async def economy_embed(self, guild_id: int, title: str, description: str) -> discord.Embed:
         theme = await self.theme(guild_id)
         color = discord.Color(int(theme.get("color", 11146790)))
@@ -97,7 +112,12 @@ class Economy(commands.Cog):
 
     @economy.command(name="shop", description="Show shop")
     async def shop(self, interaction: discord.Interaction) -> None:
-        e = await self.economy_embed(interaction.guild_id, "Shop", "\n".join(f"`{k}` - `{v}` coins" for k, v in SHOP.items()))
+        items = await self.shop_items(interaction.guild_id)
+        lines = []
+        for name, data in items.items():
+            reward = f" - <@&{data['role_id']}>" if data.get("role_id") else ""
+            lines.append(f"`{name}` - `{data['price']}` coins{reward}\n{data.get('description', '')[:120]}")
+        e = await self.economy_embed(interaction.guild_id, "Shop", "\n\n".join(lines)[:4000] or "No shop items set.")
         e.add_field(name="Tip", value="Use `/economy buy` to grab an item.", inline=False)
         await interaction.response.send_message(embed=e)
 
@@ -105,16 +125,27 @@ class Economy(commands.Cog):
     async def buy(self, interaction: discord.Interaction, item: str) -> None:
         await interaction.response.defer(ephemeral=True)
         item = item.lower()
-        if item not in SHOP:
+        items = await self.shop_items(interaction.guild_id)
+        data = items.get(item)
+        if data is None:
             await interaction.followup.send("Item not found.", ephemeral=True)
             return
+        price = int(data.get("price", 0) or 0)
         row = await self.account(interaction.guild_id, interaction.user.id)
-        if row["wallet"] < SHOP[item]:
+        if row["wallet"] < price:
             await interaction.followup.send("Not enough coins.", ephemeral=True)
             return
         inv = json.loads(row["inventory"])
         inv.append(item)
-        await self.bot.db.execute("UPDATE economy SET wallet=wallet-?, inventory=? WHERE guild_id=? AND user_id=?", SHOP[item], json.dumps(inv), interaction.guild_id, interaction.user.id)
+        await self.bot.db.execute("UPDATE economy SET wallet=wallet-?, inventory=? WHERE guild_id=? AND user_id=?", price, json.dumps(inv), interaction.guild_id, interaction.user.id)
+        role_id = int(data.get("role_id", 0) or 0)
+        role = interaction.guild.get_role(role_id) if role_id else None
+        if role and isinstance(interaction.user, discord.Member):
+            try:
+                await interaction.user.add_roles(role, reason=f"Economy shop purchase: {item}")
+            except discord.HTTPException:
+                await interaction.followup.send(f"Bought `{item}`, but I could not give the reward role.", ephemeral=True)
+                return
         await interaction.followup.send(f"Bought `{item}`.", ephemeral=True)
 
     @economy.command(name="give_coins", description="Admin: give wallet coins to a member")

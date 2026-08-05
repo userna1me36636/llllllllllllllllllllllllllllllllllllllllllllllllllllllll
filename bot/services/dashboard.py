@@ -158,6 +158,13 @@ def dashboard_html() -> str:
           <h2>Economy & Roles</h2>
           <label>Coins</label><input id="coins" type="number" value="1000">
           <div class="row"><button onclick="coins('add')">Add Coins</button><button onclick="coins('take')">Take Coins</button><button onclick="coins('set')">Set Wallet</button></div>
+          <h2>Shop Editor</h2>
+          <label>Item key</label><input id="shopKey" placeholder="vip-pass">
+          <label>Price</label><input id="shopPrice" type="number" value="2500">
+          <label>Description</label><input id="shopDescription" placeholder="Gives VIP role">
+          <label>Reward role optional</label><select id="shopRole"></select>
+          <div class="row"><button onclick="shopSave()">Save Item</button><button onclick="shopDelete()">Delete Item</button><button onclick="shopLoad()">Show Shop</button></div>
+          <div id="shopBox"></div>
           <label>Role name</label><input id="roleName" placeholder="New role name">
           <label>Role color</label><input id="roleColor" placeholder="#b2182c">
           <div class="row"><button onclick="createRole()">Create Role</button><button onclick="renameRole()">Rename Selected Role</button><button onclick="moveRoleTop()">Move Selected Role Top</button></div>
@@ -200,6 +207,7 @@ async function loadSummary(){
   $('textChannels').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
   $('members').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('roles').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
 }
 function renderCommands(commands){
   $('results').innerHTML = commands.map(c=>`<div class="cmd"><b>${c.name}</b><span>${c.description || 'No description'}</span></div>`).join('') || '<p>No commands found.</p>';
@@ -226,6 +234,9 @@ async function backup(){ const data = await api('/api/guild/' + guild() + '/back
 async function antinuke(enabled){ await api('/api/guild/' + guild() + '/antinuke/set', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled})}); setStatus('Anti-nuke updated.'); }
 async function antiWhitelist(type){ await api('/api/guild/' + guild() + '/antinuke/whitelist', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({target_id:type === 'role' ? $('roles').value : $('members').value})}); setStatus('Anti-nuke whitelist updated.'); }
 async function coins(action){ await api('/api/guild/' + guild() + '/economy/' + action, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, amount:$('coins').value})}); setStatus('Economy updated.'); }
+async function shopLoad(){ const data = await api('/api/guild/' + guild() + '/shop'); $('shopBox').innerHTML = data.items.map(i=>`<div class="cmd"><b>${i.name} - ${i.price}</b><span>${i.description}${i.role_id ? ' | role ' + i.role_id : ''}</span></div>`).join('') || '<p>No custom shop items.</p>'; setStatus('Shop loaded.'); }
+async function shopSave(){ await api('/api/guild/' + guild() + '/shop/item', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:$('shopKey').value, price:$('shopPrice').value, description:$('shopDescription').value, role_id:$('shopRole').value})}); setStatus('Shop item saved.'); await shopLoad(); }
+async function shopDelete(){ await api('/api/guild/' + guild() + '/shop/delete', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:$('shopKey').value})}); setStatus('Shop item deleted.'); await shopLoad(); }
 async function createRole(){ await api('/api/guild/' + guild() + '/role/create', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:$('roleName').value, color:$('roleColor').value})}); setStatus('Role created.'); await loadSummary(); }
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
@@ -600,6 +611,53 @@ class Dashboard:
         row = await self.bot.db.fetchrow("SELECT wallet,bank FROM economy WHERE guild_id=? AND user_id=?", guild.id, member.id)
         return web.json_response({"ok": True, "wallet": row["wallet"], "bank": row["bank"]})
 
+    async def shop_list(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        items = []
+        for name, data in settings.get("economy_shop", {}).items():
+            if isinstance(data, dict):
+                items.append({
+                    "name": name,
+                    "price": int(data.get("price", 0) or 0),
+                    "description": str(data.get("description", "")),
+                    "role_id": int(data.get("role_id", 0) or 0),
+                })
+        return web.json_response({"items": sorted(items, key=lambda item: item["name"])})
+
+    async def shop_item_save(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        name = str(body.get("name", "")).strip().lower().replace(" ", "-")[:40]
+        if not name:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Item key is required."}), content_type="application/json")
+        price = max(0, min(int(body.get("price", 0) or 0), 100_000_000))
+        description = str(body.get("description", "Custom shop item."))[:300]
+        role_id = int(body.get("role_id", 0) or 0)
+        if role_id:
+            role = guild.get_role(role_id)
+            if role is None:
+                raise web.HTTPBadRequest(text=json.dumps({"error": "Reward role does not exist."}), content_type="application/json")
+            self.require_manageable_role(guild, role)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        shop = settings.get("economy_shop", {})
+        shop[name] = {"price": price, "description": description, "role_id": role_id}
+        await self.bot.db.set_settings_value(guild.id, "economy_shop", shop, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "item": name})
+
+    async def shop_item_delete(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        name = str(body.get("name", "")).strip().lower().replace(" ", "-")[:40]
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        shop = settings.get("economy_shop", {})
+        shop.pop(name, None)
+        await self.bot.db.set_settings_value(guild.id, "economy_shop", shop, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True})
+
     async def create_role(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
@@ -737,6 +795,9 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_post("/api/guild/{guild_id}/antinuke/set", dashboard.antinuke_set)
     app.router.add_post("/api/guild/{guild_id}/antinuke/whitelist", dashboard.antinuke_whitelist)
     app.router.add_post("/api/guild/{guild_id}/economy/{action}", dashboard.economy_action)
+    app.router.add_get("/api/guild/{guild_id}/shop", dashboard.shop_list)
+    app.router.add_post("/api/guild/{guild_id}/shop/item", dashboard.shop_item_save)
+    app.router.add_post("/api/guild/{guild_id}/shop/delete", dashboard.shop_item_delete)
     app.router.add_post("/api/guild/{guild_id}/role/create", dashboard.create_role)
     app.router.add_post("/api/guild/{guild_id}/role/rename", dashboard.rename_role)
     app.router.add_post("/api/guild/{guild_id}/role/move_top", dashboard.move_role_top)
