@@ -22,11 +22,12 @@ def prefix_command_names(bot: commands.Bot) -> list[str]:
 
 
 class PrefixModal(discord.ui.Modal):
-    def __init__(self, cog: "Admin", command_name: str, query: str = "") -> None:
+    def __init__(self, cog: "Admin", command_name: str, query: str = "", page: int = 0) -> None:
         super().__init__(title=f"Set Prefix: {command_name}")
         self.cog = cog
         self.command_name = command_name
         self.query = query
+        self.page = page
         self.prefix = discord.ui.TextInput(label="Prefix", placeholder="Example: !, ?, $, .", min_length=1, max_length=12)
         self.add_item(self.prefix)
 
@@ -36,7 +37,7 @@ class PrefixModal(discord.ui.Modal):
         value = str(self.prefix).strip()[:12]
         overrides[self.command_name] = [value]
         await self.cog.bot.db.set_settings_value(interaction.guild_id, "command_prefix_overrides", overrides, self.cog.bot.settings.default_prefix)
-        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query), view=PrefixPanel(self.cog, self.query))
+        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query, self.page), view=PrefixPanel(self.cog, self.query, self.page))
 
 
 class PrefixSearchModal(discord.ui.Modal):
@@ -52,10 +53,11 @@ class PrefixSearchModal(discord.ui.Modal):
 
 
 class PrefixSetAllModal(discord.ui.Modal):
-    def __init__(self, cog: "Admin", query: str = "") -> None:
+    def __init__(self, cog: "Admin", query: str = "", page: int = 0) -> None:
         super().__init__(title="Set All Command Prefixes")
         self.cog = cog
         self.query = query
+        self.page = page
         self.prefix = discord.ui.TextInput(label="Prefix for every command", placeholder="Example: !, ?, $, .", min_length=1, max_length=12)
         self.add_item(self.prefix)
 
@@ -64,36 +66,40 @@ class PrefixSetAllModal(discord.ui.Modal):
         value = str(self.prefix).strip()[:12]
         overrides = {name: [value] for name in prefix_command_names(self.cog.bot)}
         await self.cog.bot.db.set_settings_value(interaction.guild_id, "command_prefix_overrides", overrides, self.cog.bot.settings.default_prefix)
-        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query), view=PrefixPanel(self.cog, self.query))
+        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query, self.page), view=PrefixPanel(self.cog, self.query, self.page))
 
 
 class PrefixCommandSelect(discord.ui.Select):
-    def __init__(self, cog: "Admin", query: str = "") -> None:
+    def __init__(self, cog: "Admin", query: str = "", page: int = 0) -> None:
         self.cog = cog
         self.query = query
+        self.page = max(0, page)
         all_names = prefix_command_names(cog.bot)
         filtered = [name for name in all_names if query.lower() in name.lower()] if query else all_names
+        start = self.page * 25
+        page_names = filtered[start:start + 25]
         options = [
             discord.SelectOption(label=name[:100], value=name, description=f"Change prefix for {name}"[:100])
-            for name in filtered[:25]
+            for name in page_names
         ]
         if not options:
             options = [discord.SelectOption(label="No commands found", value="__none__", description="Try another search")]
-        super().__init__(placeholder="Pick a command to customize", options=options)
+        super().__init__(placeholder=f"Pick a command to customize - page {self.page + 1}", options=options)
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if self.values[0] == "__none__":
             await interaction.response.send_message("No command selected.", ephemeral=True)
             return
-        await interaction.response.send_modal(PrefixModal(self.cog, self.values[0], self.query))
+        await interaction.response.send_modal(PrefixModal(self.cog, self.values[0], self.query, self.page))
 
 
 class PrefixPanel(discord.ui.View):
-    def __init__(self, cog: "Admin", query: str = "") -> None:
+    def __init__(self, cog: "Admin", query: str = "", page: int = 0) -> None:
         super().__init__(timeout=300)
         self.cog = cog
         self.query = query
-        self.add_item(PrefixCommandSelect(cog, query))
+        self.page = max(0, page)
+        self.add_item(PrefixCommandSelect(cog, query, self.page))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
@@ -107,14 +113,27 @@ class PrefixPanel(discord.ui.View):
     async def search(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(PrefixSearchModal(self.cog))
 
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        page = max(0, self.page - 1)
+        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query, page), view=PrefixPanel(self.cog, self.query, page))
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        all_names = prefix_command_names(self.cog.bot)
+        filtered = [name for name in all_names if self.query.lower() in name.lower()] if self.query else all_names
+        max_page = max(0, (len(filtered) - 1) // 25)
+        page = min(max_page, self.page + 1)
+        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query, page), view=PrefixPanel(self.cog, self.query, page))
+
     @discord.ui.button(label="Set All", style=discord.ButtonStyle.success)
     async def set_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_modal(PrefixSetAllModal(self.cog, self.query))
+        await interaction.response.send_modal(PrefixSetAllModal(self.cog, self.query, self.page))
 
     @discord.ui.button(label="Clear Command Prefixes", style=discord.ButtonStyle.danger)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog.bot.db.set_settings_value(interaction.guild_id, "command_prefix_overrides", {}, self.cog.bot.settings.default_prefix)
-        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query), view=PrefixPanel(self.cog, self.query))
+        await interaction.response.edit_message(embed=await self.cog.prefix_panel_embed(interaction.guild_id, self.query, self.page), view=PrefixPanel(self.cog, self.query, self.page))
 
 
 class Admin(commands.Cog):
@@ -124,18 +143,23 @@ class Admin(commands.Cog):
     prefix = app_commands.Group(name="prefix", description="Manage server prefixes")
     config = app_commands.Group(name="config", description="Configure bot modules")
 
-    async def prefix_panel_embed(self, guild_id: int, query: str = "") -> discord.Embed:
+    async def prefix_panel_embed(self, guild_id: int, query: str = "", page: int = 0) -> discord.Embed:
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
         overrides = settings.get("command_prefix_overrides", {})
         default_prefix = settings.get("prefix", self.bot.settings.default_prefix)
         all_names = prefix_command_names(self.bot)
         filtered = [name for name in all_names if query.lower() in name.lower()] if query else all_names
+        max_page = max(0, (len(filtered) - 1) // 25)
+        page = max(0, min(page, max_page))
+        start = page * 25
+        page_names = filtered[start:start + 25]
         e = embed("Prefix Panel", "Search commands, pick one from the menu, or set every command to one prefix.")
         e.add_field(name="Default Prefix", value=f"`{default_prefix}`", inline=True)
         e.add_field(name="Commands", value=f"`{len(all_names)}` total", inline=True)
-        e.add_field(name="Search", value=f"`{query or 'All commands'}`", inline=True)
+        e.add_field(name="Page", value=f"`{page + 1}/{max_page + 1}`", inline=True)
+        e.add_field(name="Search", value=f"`{query or 'All commands'}`", inline=False)
         lines = []
-        for name in filtered[:25]:
+        for name in page_names:
             prefixes = overrides.get(name) or overrides.get(name.split()[-1]) or [default_prefix]
             lines.append(f"`{prefixes[0]}{name}`")
         e.add_field(
