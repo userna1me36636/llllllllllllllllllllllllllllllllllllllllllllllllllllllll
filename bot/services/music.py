@@ -25,6 +25,8 @@ def ytdl_options() -> dict:
         "noplaylist": False,
         "default_search": os.getenv("YTDLP_SEARCH_PROVIDER", "ytsearch"),
         "extract_flat": False,
+        "js_runtimes": {"deno": {}},
+        "extractor_args": {"youtube": {"player_client": ["default", "ios"]}},
     }
     cookie_file = os.getenv("YTDLP_COOKIES_FILE")
     cookie_text = os.getenv("YTDLP_COOKIES_TEXT")
@@ -97,6 +99,15 @@ class GuildPlayer:
         before_options = FFMPEG_OPTS["before_options"]
         if mode >= 2:
             before_options = "-nostdin"
+        if mode == 0:
+            return discord.FFmpegOpusAudio.from_probe(
+                track.url,
+                method="fallback",
+                executable=ffmpeg_executable(mode),
+                before_options=before_options,
+                options=options,
+                bitrate=128,
+            )
         return discord.FFmpegOpusAudio(
             track.url,
             executable=ffmpeg_executable(mode),

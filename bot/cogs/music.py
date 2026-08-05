@@ -499,6 +499,12 @@ class Music(commands.Cog):
                 lines.append(f"`{index}.` `{candidate}`\nFailed: `{type(exc).__name__}: {str(exc)[:120]}`")
         if not lines:
             lines.append("No FFmpeg candidates found.")
+        try:
+            deno = subprocess.run(["deno", "--version"], capture_output=True, text=True, timeout=8)
+            deno_text = (deno.stdout or deno.stderr or "No Deno output").splitlines()[0]
+        except Exception as exc:
+            deno_text = f"Missing or failed: {type(exc).__name__}: {str(exc)[:120]}"
+        lines.append(f"**Deno**\n`{deno_text[:180]}`")
         await interaction.response.send_message(embed=embed("Music Doctor", "\n\n".join(lines)), ephemeral=True)
 
     @music.command(name="lyrics", description="Show lyrics search guidance")
