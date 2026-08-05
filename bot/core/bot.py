@@ -11,6 +11,7 @@ from discord.ext import commands
 from bot.core.config import Settings
 from bot.core.database import Database
 from bot.core.logging import setup_logging
+from bot.core.utils import theme_color_from_data
 from bot.services.dashboard import start_dashboard
 
 
@@ -176,7 +177,7 @@ class AllInOneBot(commands.Bot):
             try:
                 settings = await self.db.get_settings(guild_id, self.settings.default_prefix)
                 theme = settings.get("theme", {})
-                color = discord.Color(int(theme.get("color", color.value)))
+                color = theme_color_from_data(theme, color)
             except Exception:
                 pass
         return discord.Embed(title=title, description=description, color=color)

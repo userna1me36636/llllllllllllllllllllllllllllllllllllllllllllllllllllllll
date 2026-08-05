@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin, configured_owner, has_guild_permissions
-from bot.core.utils import embed, style_embed
+from bot.core.utils import embed, style_embed, theme_color_from_data
 
 
 FEATURES = (
@@ -179,7 +179,7 @@ class ManagementSuite(commands.Cog):
         if guild_id is not None:
             settings = await self.settings(guild_id)
             theme = settings.get("theme", {})
-            color = discord.Color(int(theme.get("color", color.value)))
+            color = theme_color_from_data(theme, color)
         e = embed(title, description, color)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=False)
         return e

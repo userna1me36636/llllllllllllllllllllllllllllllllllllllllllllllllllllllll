@@ -11,7 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin, has_guild_permissions
-from bot.core.utils import embed, level_for_xp, style_embed
+from bot.core.utils import embed, level_for_xp, style_embed, theme_color_from_data
 
 
 INVITE_RE = re.compile(r"(discord\.gg/|discord\.com/invite/)", re.I)
@@ -162,7 +162,7 @@ class CommunitySuite(commands.Cog):
         if guild_id is not None:
             settings = await self.settings(guild_id)
             theme = settings.get("theme", {})
-            color = discord.Color(int(theme.get("color", color.value)))
+            color = theme_color_from_data(theme, color)
         e = embed(title, description, color)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=False)
         return e

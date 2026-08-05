@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import configured_owner
-from bot.core.utils import DEFAULT_COLOR, embed, progress_bar, pulse_line, style_embed
+from bot.core.utils import DEFAULT_COLOR, embed, progress_bar, pulse_line, style_embed, theme_color_from_data
 from bot.services.music import MusicManager, Track, ffmpeg_candidates
 from bot.services.music_helpers import MusicHelperManager
 
@@ -151,17 +151,23 @@ class Music(commands.Cog):
 
     async def load_theme(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        color = settings.get("theme", {}).get("color")
         self.theme_options[guild.id] = settings.get("theme", {})
+        color = settings.get("theme", {}).get("color")
         if color:
-            self.theme_colors[guild.id] = int(color)
-            colors = getattr(self.bot, "theme_colors", {})
-            colors[guild.id] = int(color)
-            setattr(self.bot, "theme_colors", colors)
+            try:
+                self.theme_colors[guild.id] = int(color)
+                colors = getattr(self.bot, "theme_colors", {})
+                colors[guild.id] = int(color)
+                setattr(self.bot, "theme_colors", colors)
+            except (TypeError, ValueError):
+                pass
 
     def theme_color(self, guild: discord.Guild | None) -> discord.Color:
         if guild is None:
             return DEFAULT_COLOR
+        theme = self.theme_options.get(guild.id) or getattr(self.bot, "theme_options", {}).get(guild.id, {})
+        if theme.get("mode") == "fade":
+            return theme_color_from_data(theme)
         cached = self.theme_colors.get(guild.id) or getattr(self.bot, "theme_colors", {}).get(guild.id)
         return discord.Color(int(cached)) if cached else DEFAULT_COLOR
 

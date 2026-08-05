@@ -5,6 +5,7 @@ import random
 import re
 import secrets
 import string
+import time
 from typing import Iterable
 
 import discord
@@ -16,6 +17,13 @@ LIGHT_PURPLE = discord.Color.from_rgb(183, 151, 255)
 WHITE = discord.Color.from_rgb(245, 242, 255)
 GLASS_RED = discord.Color.from_rgb(170, 22, 38)
 DEEP_RED = discord.Color.from_rgb(55, 8, 14)
+MULTICOLOR_FADE_COLORS = (
+    (255, 56, 100),
+    (183, 92, 255),
+    (32, 211, 255),
+    (66, 255, 158),
+    (255, 203, 71),
+)
 PURPLE_LINES = (
     "red glass",
     "white outline",
@@ -46,6 +54,34 @@ def embed(title: str, description: str | None = None, color: discord.Color = DEF
     e = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
     e.set_footer(text=f"AinBot | {random.choice(PURPLE_LINES)}")
     return e
+
+
+def is_multicolor_theme(value: str) -> bool:
+    return value.strip().lower() in {"fade", "rainbow", "multi", "multicolor", "multi_color", "aurora"}
+
+
+def multicolor_fade_color(speed: float = 10.0) -> discord.Color:
+    position = time.time() / max(speed, 1.0)
+    index = int(position) % len(MULTICOLOR_FADE_COLORS)
+    next_index = (index + 1) % len(MULTICOLOR_FADE_COLORS)
+    blend = position - int(position)
+    start = MULTICOLOR_FADE_COLORS[index]
+    end = MULTICOLOR_FADE_COLORS[next_index]
+    rgb = tuple(round(start[i] + (end[i] - start[i]) * blend) for i in range(3))
+    return discord.Color.from_rgb(*rgb)
+
+
+def theme_color_from_data(theme: dict | None, fallback: discord.Color = DEFAULT_COLOR) -> discord.Color:
+    theme = theme or {}
+    if str(theme.get("mode", "")).lower() in {"fade", "rainbow", "multicolor", "aurora"}:
+        return multicolor_fade_color(float(theme.get("fade_speed", 10) or 10))
+    color = theme.get("color")
+    if color is not None:
+        try:
+            return discord.Color(int(color))
+        except (TypeError, ValueError):
+            return fallback
+    return fallback
 
 
 def glow_bar() -> str:
@@ -84,11 +120,15 @@ def parse_color(value: str) -> discord.Color:
         "glass_red": GLASS_RED,
         "deepred": DEEP_RED,
         "deep_red": DEEP_RED,
+        "fade": multicolor_fade_color(),
+        "rainbow": multicolor_fade_color(),
+        "multicolor": multicolor_fade_color(),
+        "aurora": multicolor_fade_color(),
     }
     if value.strip().lower() in named:
         return named[value.strip().lower()]
     if not re.fullmatch(r"[0-9a-f]{6}", cleaned):
-        raise ValueError("Use a hex color like #aa1626, or red, glassred, deepred, white.")
+        raise ValueError("Use a hex color like #aa1626, red, glassred, deepred, white, or fade.")
     return discord.Color(int(cleaned, 16))
 
 

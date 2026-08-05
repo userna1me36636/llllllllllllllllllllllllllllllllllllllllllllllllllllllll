@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin, has_guild_permissions
-from bot.core.utils import embed, style_embed
+from bot.core.utils import embed, style_embed, theme_color_from_data
 
 
 class Doctor(commands.Cog):
@@ -23,7 +23,7 @@ class Doctor(commands.Cog):
         try:
             settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
             theme = settings.get("theme", {})
-            color = discord.Color(int(theme.get("color", color.value)))
+            color = theme_color_from_data(theme, color)
         except Exception:
             pass
         return color, theme

@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin
-from bot.core.utils import embed, progress_bar, style_embed
+from bot.core.utils import embed, progress_bar, style_embed, theme_color_from_data
 
 
 SHOP = {"cookie": 50, "badge": 500, "vip-pass": 2500}
@@ -49,7 +49,7 @@ class Economy(commands.Cog):
 
     async def economy_embed(self, guild_id: int, title: str, description: str) -> discord.Embed:
         theme = await self.theme(guild_id)
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         return style_embed(embed(title, description, color), banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     @economy.command(name="balance", description="Show balance")

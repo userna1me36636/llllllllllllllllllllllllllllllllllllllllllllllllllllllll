@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin, configured_owner
-from bot.core.utils import embed, parse_color, parse_duration, pulse_line, style_embed
+from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_duration, pulse_line, style_embed, theme_color_from_data
 
 
 class OwnerRoleConfirmView(discord.ui.View):
@@ -107,10 +107,25 @@ class CommandMenu(commands.Cog):
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
         theme = settings.get("theme", {})
         theme["color"] = color.value
+        theme["mode"] = "solid"
         await self.bot.db.set_settings_value(guild_id, "theme", theme, self.bot.settings.default_prefix)
         colors = getattr(self.bot, "theme_colors", {})
         colors[guild_id] = color.value
         setattr(self.bot, "theme_colors", colors)
+        theme_options = getattr(self.bot, "theme_options", {})
+        theme_options[guild_id] = theme
+        setattr(self.bot, "theme_options", theme_options)
+
+    async def save_theme_fade(self, guild_id: int) -> dict:
+        settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
+        theme = settings.get("theme", {})
+        theme["mode"] = "fade"
+        theme["fade_speed"] = 10
+        await self.bot.db.set_settings_value(guild_id, "theme", theme, self.bot.settings.default_prefix)
+        theme_options = getattr(self.bot, "theme_options", {})
+        theme_options[guild_id] = theme
+        setattr(self.bot, "theme_options", theme_options)
+        return theme
 
     async def save_theme_value(self, guild_id: int, key: str, value: object) -> dict:
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
@@ -126,6 +141,12 @@ class CommandMenu(commands.Cog):
     @theme.command(name="color", description="Change the bot embed color for this server")
     @app_admin()
     async def theme_color(self, interaction: discord.Interaction, color: str) -> None:
+        if is_multicolor_theme(color):
+            theme = await self.save_theme_fade(interaction.guild_id)
+            e = embed("Theme Updated", f"{pulse_line()}\n\nServer bot theme changed to **multicolor fade**.", theme_color_from_data(theme))
+            e.add_field(name="Preview", value="New embeds will slowly rotate through red, purple, blue, green, and gold.", inline=False)
+            await interaction.response.send_message(embed=style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True)), ephemeral=True)
+            return
         try:
             parsed = parse_color(color)
         except ValueError as exc:
@@ -139,8 +160,9 @@ class CommandMenu(commands.Cog):
     @theme.command(name="preview", description="Preview the current bot theme")
     async def theme_preview(self, interaction: discord.Interaction) -> None:
         theme = await self.theme_data(interaction.guild_id)
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         e = embed("Theme Preview", pulse_line(), color)
+        e.add_field(name="Mode", value="Multicolor fade" if theme.get("mode") == "fade" else "Solid color", inline=True)
         e.add_field(name="Effects", value="On" if theme.get("effects", True) else "Off", inline=True)
         e.add_field(name="Banner", value="Set" if theme.get("banner_url") else "Not set", inline=True)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
@@ -153,7 +175,7 @@ class CommandMenu(commands.Cog):
             await interaction.response.send_message("Use a direct image/GIF link that starts with http or https.", ephemeral=True)
             return
         theme = await self.save_theme_value(interaction.guild_id, "banner_url", url or "")
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         e = embed("Theme Banner Updated", "Panel banner cleared." if not url else "New panel banner saved.", color)
         style_embed(e, banner_url=url, flashy=theme.get("effects", True))
         await interaction.response.send_message(embed=e, ephemeral=True)
@@ -162,7 +184,7 @@ class CommandMenu(commands.Cog):
     @app_admin()
     async def theme_effects(self, interaction: discord.Interaction, enabled: bool = True) -> None:
         theme = await self.save_theme_value(interaction.guild_id, "effects", enabled)
-        color = discord.Color(int(theme.get("color", 11847423)))
+        color = theme_color_from_data(theme, discord.Color(11847423))
         e = embed("Theme Effects Updated", f"Flashy panel effects are now **{'on' if enabled else 'off'}**.", color)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=enabled)
         await interaction.response.send_message(embed=e, ephemeral=True)
@@ -216,6 +238,12 @@ class CommandMenu(commands.Cog):
         if not ctx.author.guild_permissions.administrator and not await configured_owner(self.bot, ctx.author):
             await ctx.reply("Administrator or OWNER_IDS only.", mention_author=False)
             return
+        if is_multicolor_theme(color):
+            theme = await self.save_theme_fade(ctx.guild.id)
+            e = embed("Theme Updated", f"{pulse_line()}\n\nServer bot theme changed to **multicolor fade**.", theme_color_from_data(theme))
+            e.add_field(name="Preview", value="New embeds will slowly rotate through red, purple, blue, green, and gold.", inline=False)
+            await ctx.reply(embed=style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True)), mention_author=False)
+            return
         try:
             parsed = parse_color(color)
         except ValueError as exc:
@@ -229,8 +257,9 @@ class CommandMenu(commands.Cog):
     @theme_prefix.command(name="preview")
     async def theme_prefix_preview(self, ctx: commands.Context) -> None:
         theme = await self.theme_data(ctx.guild.id)
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         e = embed("Theme Preview", pulse_line(), color)
+        e.add_field(name="Mode", value="Multicolor fade" if theme.get("mode") == "fade" else "Solid color", inline=True)
         e.add_field(name="Effects", value="On" if theme.get("effects", True) else "Off", inline=True)
         e.add_field(name="Banner", value="Set" if theme.get("banner_url") else "Not set", inline=True)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
@@ -245,7 +274,7 @@ class CommandMenu(commands.Cog):
             await ctx.reply("Use a direct image/GIF link that starts with http or https.", mention_author=False)
             return
         theme = await self.save_theme_value(ctx.guild.id, "banner_url", url or "")
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         e = embed("Theme Banner Updated", "Panel banner cleared." if not url else "New panel banner saved.", color)
         style_embed(e, banner_url=url, flashy=theme.get("effects", True))
         await ctx.reply(embed=e, mention_author=False)
@@ -257,7 +286,7 @@ class CommandMenu(commands.Cog):
             return
         state = enabled.lower() in {"on", "yes", "true", "1", "enable", "enabled"}
         theme = await self.save_theme_value(ctx.guild.id, "effects", state)
-        color = discord.Color(int(theme.get("color", 11146790)))
+        color = theme_color_from_data(theme, discord.Color(11146790))
         e = embed("Theme Effects Updated", f"Flashy panel effects are now **{'on' if state else 'off'}**.", color)
         style_embed(e, banner_url=theme.get("banner_url"), flashy=state)
         await ctx.reply(embed=e, mention_author=False)

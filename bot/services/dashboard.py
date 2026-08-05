@@ -13,6 +13,7 @@ from aiohttp import ClientSession, web
 from discord.ext import commands
 
 from bot.cogs.server_backup import make_code
+from bot.core.utils import is_multicolor_theme, theme_color_from_data
 from bot.services.music import ffmpeg_executable
 
 
@@ -91,7 +92,7 @@ def dashboard_html() -> str:
           <label>Prefix</label>
           <div class="row"><input id="prefix" placeholder="," maxlength="12"><button onclick="savePrefix()">Save</button></div>
           <label>Theme color</label>
-          <div class="row"><input id="color" placeholder="#b2182c"><button onclick="saveTheme()">Save</button></div>
+          <div class="row"><input id="color" placeholder="#b2182c or fade"><button onclick="saveTheme()">Save</button></div>
           <label>Feature</label>
           <div class="row"><input id="feature" placeholder="music"><button onclick="feature(true)">On</button><button onclick="feature(false)">Off</button></div>
         </div>
@@ -446,12 +447,25 @@ class Dashboard:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
-        raw = str(body.get("color", "#b2182c")).strip().lstrip("#")
-        color = int(raw, 16) if len(raw) == 6 else 0xB2182C
+        raw_value = str(body.get("color", "#b2182c")).strip()
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
         theme = settings.get("theme", {})
+        if is_multicolor_theme(raw_value):
+            theme["mode"] = "fade"
+            theme["fade_speed"] = 10
+            await self.bot.db.set_settings_value(guild.id, "theme", theme, self.bot.settings.default_prefix)
+            theme_options = getattr(self.bot, "theme_options", {})
+            theme_options[guild.id] = theme
+            setattr(self.bot, "theme_options", theme_options)
+            return web.json_response({"ok": True, "mode": "fade"})
+        raw = raw_value.lstrip("#")
+        color = int(raw, 16) if len(raw) == 6 else 0xB2182C
         theme["color"] = color
+        theme["mode"] = "solid"
         await self.bot.db.set_settings_value(guild.id, "theme", theme, self.bot.settings.default_prefix)
+        theme_options = getattr(self.bot, "theme_options", {})
+        theme_options[guild.id] = theme
+        setattr(self.bot, "theme_options", theme_options)
         return web.json_response({"ok": True, "color": color})
 
     async def set_feature(self, request: web.Request) -> web.Response:
@@ -556,7 +570,7 @@ class Dashboard:
         if not message:
             raise web.HTTPBadRequest(text=json.dumps({"error": "Embed message cannot be empty."}), content_type="application/json")
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        color = int(settings.get("theme", {}).get("color", 0xB2182C))
+        color = theme_color_from_data(settings.get("theme", {}), discord.Color(0xB2182C))
         await channel.send(embed=discord.Embed(title=title, description=message, color=color))
         return web.json_response({"ok": True})
 
