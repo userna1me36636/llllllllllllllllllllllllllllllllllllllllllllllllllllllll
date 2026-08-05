@@ -14,7 +14,10 @@ YTDL_OPTS = {
     "default_search": "ytsearch",
     "extract_flat": False,
 }
-FFMPEG_OPTS = {"options": "-vn"}
+FFMPEG_OPTS = {
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
+}
 
 
 @dataclass

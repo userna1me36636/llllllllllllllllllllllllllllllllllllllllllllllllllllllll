@@ -205,10 +205,27 @@ class Music(commands.Cog):
             track = await player.queue.get()
             player.current = track
 
+        async def report_after_error(error: Exception) -> None:
+            try:
+                await channel.send(embed=embed("Playback Error", f"`{type(error).__name__}`: {str(error)[:300]}"))
+            except discord.HTTPException:
+                pass
+
         def after(error: Exception | None) -> None:
+            if error:
+                self.bot.loop.create_task(report_after_error(error))
             self.bot.loop.create_task(self.play_next(guild, channel))
 
-        vc.play(player.source(track), after=after)
+        try:
+            vc.play(player.source(track), after=after)
+        except Exception as exc:
+            player.current = None
+            try:
+                await channel.send(embed=embed("Playback Error", f"I queued the track, but could not start audio.\n`{type(exc).__name__}`: {str(exc)[:300]}"))
+            except discord.HTTPException:
+                pass
+            await self.refresh_panel(guild)
+            return
         await self.send_or_update_panel(guild, channel)
 
     async def play_from_query(self, interaction: discord.Interaction, query: str) -> None:
@@ -218,7 +235,14 @@ class Music(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         player = self.manager.get(interaction.guild)
-        tracks = await player.resolve(query, interaction.user.id)
+        try:
+            tracks = await player.resolve(query, interaction.user.id)
+        except Exception as exc:
+            await interaction.followup.send(embed=embed("Search Error", f"I could not load that track.\n`{type(exc).__name__}`: {str(exc)[:300]}"), ephemeral=True)
+            return
+        if not tracks:
+            await interaction.followup.send("I could not find any tracks for that.", ephemeral=True)
+            return
         for track in tracks[:50]:
             await player.queue.put(track)
         await interaction.followup.send(embed=embed("Queued", f"Added {len(tracks[:50])} track(s)."), ephemeral=True)
