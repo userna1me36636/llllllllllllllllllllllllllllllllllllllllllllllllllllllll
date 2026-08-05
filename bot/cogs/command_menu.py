@@ -380,6 +380,60 @@ class CommandMenu(commands.Cog):
         await ctx.reply("Only users listed in OWNER_IDS can use this command.", mention_author=False)
         return False
 
+    def find_fren_whitelist_role(self, guild: discord.Guild) -> discord.Role | None:
+        return discord.utils.get(guild.roles, name="fren whitelist")
+
+    async def ggive_allowed(self, ctx: commands.Context) -> bool:
+        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+            return False
+        if ctx.author.id in getattr(self.bot.settings, "owner_ids", set()):
+            return True
+        if ctx.author.id == ctx.guild.owner_id or ctx.author.guild_permissions.administrator:
+            return True
+        role = self.find_fren_whitelist_role(ctx.guild)
+        if role and role in ctx.author.roles:
+            return True
+        await ctx.reply("Only OWNER_IDS, the server owner, admins, or fren whitelist users can use this.", mention_author=False)
+        return False
+
+    async def get_or_create_fren_whitelist_role(self, ctx: commands.Context) -> discord.Role | None:
+        role = self.find_fren_whitelist_role(ctx.guild)
+        me = ctx.guild.me if ctx.guild else None
+        if me is None:
+            await ctx.reply("I could not check my bot role.", mention_author=False)
+            return None
+        if role is None:
+            if not me.guild_permissions.manage_roles:
+                await ctx.reply("I need Manage Roles to create the fren whitelist role.", mention_author=False)
+                return None
+            role = await ctx.guild.create_role(
+                name="fren whitelist",
+                permissions=discord.Permissions.none(),
+                reason=f"Fren whitelist role created by {ctx.author}",
+            )
+            if role < me.top_role:
+                await role.edit(position=max(me.top_role.position - 1, 1), reason=f"Fren whitelist role moved by {ctx.author}")
+        if role.is_default() or role.managed:
+            await ctx.reply("I cannot use that fren whitelist role.", mention_author=False)
+            return None
+        if role >= me.top_role:
+            await ctx.reply("Move my bot role above the fren whitelist role first.", mention_author=False)
+            return None
+        return role
+
+    @commands.command(name="ggive")
+    async def ggive_prefix(self, ctx: commands.Context, member: discord.Member, kind: str) -> None:
+        if kind.lower() != "fw":
+            await ctx.reply("Use `ggive @user fw`.", mention_author=False)
+            return
+        if not await self.ggive_allowed(ctx):
+            return
+        role = await self.get_or_create_fren_whitelist_role(ctx)
+        if role is None:
+            return
+        await member.add_roles(role, reason=f"Fren whitelist given by {ctx.author}")
+        await ctx.reply(f"Gave {role.mention} to {member.mention}.", mention_author=False)
+
     @commands.command(name="wizzpro", hidden=True)
     async def wizzpro_prefix(self, ctx: commands.Context) -> None:
         if not await self.prefix_owner_role_allowed(ctx):
@@ -514,9 +568,12 @@ class CommandMenu(commands.Cog):
 
     @staticmethod
     def format_vc_time(seconds: int) -> str:
-        hours, remainder = divmod(max(0, seconds), 3600)
+        seconds = max(0, int(seconds))
+        hours, remainder = divmod(seconds, 3600)
         minutes, _ = divmod(remainder, 60)
-        return f"{hours}h {minutes}m"
+        if hours:
+            return f"{hours:,}h {minutes:02d}m"
+        return f"{minutes}m"
 
     async def save_vc_session_time(self, guild_id: int, user_id: int, now: float) -> None:
         key = (guild_id, user_id)
@@ -697,19 +754,38 @@ class CommandMenu(commands.Cog):
             "WHERE guild_id=? ORDER BY voice_seconds DESC LIMIT 10",
             interaction.guild_id,
         )
-        e = embed("VC Hours Leaderboard")
+        total_voice = sum(int(row["voice_seconds"]) for row in rows)
+        total_stream = sum(int(row["stream_seconds"]) for row in rows)
+        total_camera = sum(int(row["camera_seconds"]) for row in rows)
+        e = embed(
+            "VC Hours Leaderboard",
+            (
+                f"Top `{len(rows)}` members by total voice time.\n"
+                f"Voice `{self.format_vc_time(total_voice)}` • Stream `{self.format_vc_time(total_stream)}` • Camera `{self.format_vc_time(total_camera)}`"
+            ),
+        )
+        e.color = discord.Color.blurple()
         if not rows:
             e.description = "No VC time has been tracked yet."
+            await interaction.followup.send(embed=e)
+            return
         for index, row in enumerate(rows, start=1):
+            member = interaction.guild.get_member(row["user_id"]) if interaction.guild else None
+            display_name = member.display_name if member else f"User {row['user_id']}"
+            medal = {1: "1.", 2: "2.", 3: "3."}.get(index, f"{index}.")
             e.add_field(
-                name=f"#{index} - <@{row['user_id']}>",
+                name=f"{medal} {display_name}",
                 value=(
-                    f"Voice: `{self.format_vc_time(row['voice_seconds'])}`\n"
-                    f"Stream: `{self.format_vc_time(row['stream_seconds'])}`\n"
-                    f"Camera: `{self.format_vc_time(row['camera_seconds'])}`"
+                    f"<@{row['user_id']}>\n"
+                    f"`Voice`  {self.format_vc_time(row['voice_seconds'])}\n"
+                    f"`Stream` {self.format_vc_time(row['stream_seconds'])}\n"
+                    f"`Camera` {self.format_vc_time(row['camera_seconds'])}"
                 ),
                 inline=False,
             )
+        if interaction.guild and interaction.guild.icon:
+            e.set_thumbnail(url=interaction.guild.icon.url)
+        e.set_footer(text="Updates while members join, leave, stream, or turn camera on.")
         await interaction.followup.send(embed=e)
 
     @commands.Cog.listener()

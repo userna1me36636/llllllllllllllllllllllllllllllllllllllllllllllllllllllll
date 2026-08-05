@@ -10,7 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed
 
 
@@ -338,6 +338,48 @@ class AntiNuke(commands.Cog):
                 return guild.get_member(entry.user.id)
         return None
 
+    async def actor_from_ban_audit(self, guild: discord.Guild, user: discord.User) -> discord.Member | None:
+        async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.ban):
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 15:
+                continue
+            if entry.target and entry.target.id == user.id and entry.user:
+                return guild.get_member(entry.user.id)
+        return None
+
+    async def protect_owner_from_ban(self, guild: discord.Guild, user: discord.User) -> bool:
+        owner_ids = getattr(self.bot.settings, "owner_ids", set())
+        if user.id not in owner_ids:
+            return False
+
+        actor = await self.actor_from_ban_audit(guild, user)
+        try:
+            await guild.unban(user, reason="Owner ID ban protection")
+            unbanned = True
+        except discord.HTTPException:
+            unbanned = False
+
+        punishment = "none"
+        if actor and actor.id != guild.owner_id and actor.id != self.bot.user.id and not await configured_owner(self.bot, actor):
+            me = guild.me
+            if me and actor.top_role < me.top_role:
+                roles = [role for role in actor.roles if not role.managed and role != guild.default_role and role < me.top_role]
+                if roles:
+                    try:
+                        await actor.remove_roles(*roles, reason=f"Owner ID ban protection: banned {user}")
+                        punishment = "strip_roles"
+                    except discord.HTTPException:
+                        punishment = "strip_roles_failed"
+
+        await self.bot.db.execute(
+            "INSERT INTO audit_events(guild_id,actor_id,target_id,event,data) VALUES(?,?,?,?,?)",
+            guild.id,
+            actor.id if actor else None,
+            user.id,
+            "owner_ban_protection",
+            json.dumps({"unbanned": unbanned, "punishment": punishment}),
+        )
+        return True
+
     async def record(self, guild: discord.Guild, event: str) -> None:
         config = await self.get_config(guild.id)
         if not config.get("enabled", True):
@@ -432,6 +474,8 @@ class AntiNuke(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
+        if await self.protect_owner_from_ban(guild, user):
+            return
         await self.record(guild, "ban_spam")
 
     @commands.Cog.listener()
