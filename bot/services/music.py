@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import ctypes.util
 import os
 import tempfile
 from dataclasses import dataclass
@@ -41,32 +40,6 @@ def ffmpeg_executable() -> str:
     return os.getenv("FFMPEG_PATH") or imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def ensure_opus_loaded() -> None:
-    if discord.opus.is_loaded():
-        return
-    opus_path = os.getenv("OPUS_PATH") or ctypes.util.find_library("opus")
-    names = [opus_path, "libopus.so.0", "libopus.so", "opus"]
-    search_roots = [Path("/nix/store"), Path("/usr/lib"), Path("/usr/local/lib"), Path("/lib")]
-    for root in search_roots:
-        if not root.exists():
-            continue
-        try:
-            names.extend(str(path) for path in root.rglob("libopus.so*"))
-        except OSError:
-            continue
-    for name in names:
-        if not name:
-            continue
-        try:
-            discord.opus.load_opus(name)
-        except OSError:
-            continue
-        if discord.opus.is_loaded():
-            return
-    checked = ", ".join(str(name) for name in names[:8] if name)
-    raise RuntimeError(f"Opus library was not found. Checked: {checked}")
-
-
 @dataclass
 class Track:
     title: str
@@ -99,10 +72,15 @@ class GuildPlayer:
             tracks.append(Track(item.get("title", "Unknown track"), item["url"], item.get("webpage_url", query), requester_id, item.get("duration")))
         return tracks
 
-    def source(self, track: Track) -> discord.PCMVolumeTransformer:
-        ensure_opus_loaded()
-        audio = discord.FFmpegPCMAudio(track.url, executable=ffmpeg_executable(), **FFMPEG_OPTS)
-        return discord.PCMVolumeTransformer(audio, volume=self.volume)
+    def source(self, track: Track) -> discord.AudioSource:
+        options = f"-vn -filter:a volume={self.volume}"
+        return discord.FFmpegOpusAudio(
+            track.url,
+            executable=ffmpeg_executable(),
+            before_options=FFMPEG_OPTS["before_options"],
+            options=options,
+            bitrate=128,
+        )
 
 
 class MusicManager:
