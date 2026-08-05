@@ -11,6 +11,7 @@ from discord.ext import commands
 from bot.core.config import Settings
 from bot.core.database import Database
 from bot.core.logging import setup_logging
+from bot.services.dashboard import start_dashboard
 
 
 COGS: tuple[str, ...] = (
@@ -18,6 +19,9 @@ COGS: tuple[str, ...] = (
     "bot.cogs.admin",
     "bot.cogs.doctor",
     "bot.cogs.setup_tools",
+    "bot.cogs.growth_safety",
+    "bot.cogs.community_suite",
+    "bot.cogs.management_suite",
     "bot.cogs.moderation",
     "bot.cogs.automod",
     "bot.cogs.antinuke",
@@ -75,7 +79,10 @@ class AllInOneBot(commands.Bot):
         self.db = Database(settings.database_url)
         self.started_at = discord.utils.utcnow()
         self.log = logging.getLogger("bot")
+        self._prefix_cooldowns: dict[tuple[int, int, str], float] = {}
+        self.failed_cogs: dict[str, str] = {}
         self.add_check(self._command_prefix_allowed)
+        self.add_check(self._feature_command_allowed)
 
     async def _command_prefix_allowed(self, ctx: commands.Context) -> bool:
         if ctx.guild is None or ctx.command is None:
@@ -89,14 +96,47 @@ class AllInOneBot(commands.Bot):
             return True
         return ctx.prefix in allowed
 
+    async def _feature_command_allowed(self, ctx: commands.Context) -> bool:
+        if ctx.guild is None or ctx.command is None:
+            return True
+        settings = await self.db.get_settings(ctx.guild.id, self.settings.default_prefix)
+        root = ctx.command.qualified_name.split()[0]
+        feature_flags = settings.get("feature_flags", {})
+        if feature_flags.get(root) is False:
+            await self.safe_context_reply(ctx, "Feature Disabled")
+            return False
+        role_rules = settings.get("command_role_permissions", {})
+        allowed_roles = role_rules.get(ctx.command.qualified_name) or role_rules.get(root)
+        if allowed_roles and isinstance(ctx.author, discord.Member):
+            if not any(role.id in allowed_roles for role in ctx.author.roles) and not ctx.author.guild_permissions.administrator:
+                await self.safe_context_reply(ctx, "Command Locked")
+                return False
+        cooldowns = settings.get("command_cooldowns", {})
+        seconds = int(cooldowns.get(ctx.command.qualified_name, cooldowns.get(root, 0)) or 0)
+        if seconds > 0:
+            key = (ctx.guild.id, ctx.author.id, ctx.command.qualified_name)
+            now = discord.utils.utcnow().timestamp()
+            ready_at = self._prefix_cooldowns.get(key, 0)
+            if now < ready_at:
+                await self.safe_context_reply(ctx, "Cooldown Active", f"Try again in `{int(ready_at - now)}` seconds.")
+                return False
+            self._prefix_cooldowns[key] = now + seconds
+        return True
+
     async def setup_hook(self) -> None:
         await self.db.init()
         for cog in COGS:
             if cog.endswith(".music") and not self.settings.enable_music:
                 continue
-            await self.load_extension(cog)
+            try:
+                await self.load_extension(cog)
+            except Exception as exc:
+                self.failed_cogs[cog] = f"{type(exc).__name__}: {str(exc)[:300]}"
+                self.log.exception("Could not load extension %s", cog)
         if self.settings.auto_sync_commands:
             self.loop.create_task(self._sync_commands())
+        if self.settings.dashboard_enabled:
+            self.loop.create_task(start_dashboard(self))
 
     async def _sync_commands(self) -> None:
         await self.wait_until_ready()
@@ -105,6 +145,30 @@ class AllInOneBot(commands.Bot):
 
     async def on_ready(self) -> None:
         self.log.info("Logged in as %s (%s)", self.user, self.user.id if self.user else "unknown")
+
+    async def on_command_completion(self, ctx: commands.Context) -> None:
+        if ctx.guild is None or ctx.command is None:
+            return
+        await self.log_command_usage(ctx.guild.id, ctx.author.id, ctx.channel.id, ctx.command.qualified_name, "ok")
+
+    async def log_command_usage(self, guild_id: int, user_id: int, channel_id: int, command: str, status: str) -> None:
+        try:
+            await self.db.execute(
+                "INSERT INTO audit_events(guild_id,actor_id,target_id,event,data) VALUES(?,?,?,?,?)",
+                guild_id,
+                user_id,
+                channel_id,
+                "command_usage",
+                __import__("json").dumps({"command": command, "status": status}),
+            )
+            settings = await self.db.get_settings(guild_id, self.settings.default_prefix)
+            log_channel_id = settings.get("command_log_channel")
+            guild = self.get_guild(guild_id)
+            channel = guild.get_channel(int(log_channel_id)) if guild and log_channel_id else None
+            if isinstance(channel, discord.TextChannel):
+                await channel.send(embed=await self.themed_embed(guild_id, "Command Used", f"<@{user_id}> used `{command}` in <#{channel_id}>.\nStatus: `{status}`"))
+        except Exception:
+            self.log.debug("Could not record command usage", exc_info=True)
 
     async def themed_embed(self, guild_id: int | None, title: str, description: str | None = None) -> discord.Embed:
         color = discord.Color.from_rgb(170, 22, 38)
@@ -128,6 +192,8 @@ class AllInOneBot(commands.Bot):
             await self.safe_context_reply(ctx, "Bad Input", str(error))
             return
         self.log.exception("Command error in %s", ctx.command, exc_info=error)
+        if ctx.guild is not None and ctx.command is not None:
+            await self.log_command_usage(ctx.guild.id, ctx.author.id, ctx.channel.id, ctx.command.qualified_name, "error")
         await self.safe_context_reply(ctx, "Command Error")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:

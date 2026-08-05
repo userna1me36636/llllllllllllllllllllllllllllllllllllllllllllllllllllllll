@@ -12,6 +12,62 @@ from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed, parse_color, parse_duration, pulse_line, style_embed
 
 
+class OwnerRoleConfirmView(discord.ui.View):
+    def __init__(self, cog: "CommandMenu", action: str, role: discord.Role, target_role: discord.Role | None = None) -> None:
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.action = action
+        self.role = role
+        self.target_role = target_role
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if await configured_owner(self.cog.bot, interaction.user):
+            return True
+        await interaction.response.send_message("Only users in OWNER_IDS can confirm this.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Confirm Role Edit", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        role = interaction.guild.get_role(self.role.id)
+        if role is None:
+            await interaction.response.edit_message(content="That role no longer exists.", view=None)
+            return
+        me = interaction.guild.me
+        if me is None or role >= me.top_role:
+            await interaction.response.edit_message(content="I cannot manage that role anymore. Move my bot role higher first.", view=None)
+            return
+        if self.action == "move_top":
+            await role.edit(position=max(me.top_role.position - 1, 1), reason=f"Confirmed owner role move by {interaction.user}")
+            await interaction.response.edit_message(content=f"Moved {role.mention} as high as I can place it.", view=None)
+            return
+        if self.target_role is not None:
+            target = interaction.guild.get_role(self.target_role.id)
+            if target is None:
+                await interaction.response.edit_message(content="The target role no longer exists.", view=None)
+                return
+            if self.action == "move_above":
+                await role.edit(position=min(target.position + 1, me.top_role.position - 1), reason=f"Confirmed owner role move by {interaction.user}")
+                await interaction.response.edit_message(content=f"Moved {role.mention} above {target.mention}.", view=None)
+                return
+            if self.action == "move_below":
+                await role.edit(position=target.position, reason=f"Confirmed owner role move by {interaction.user}")
+                await interaction.response.edit_message(content=f"Moved {role.mention} below {target.mention}.", view=None)
+                return
+        permissions = role.permissions
+        if self.action == "admin_on":
+            permissions.administrator = True
+        elif self.action == "admin_off":
+            permissions.administrator = False
+        elif self.action == "admin_toggle":
+            permissions.administrator = not permissions.administrator
+        await role.edit(permissions=permissions, reason=f"Confirmed owner role admin edit by {interaction.user}")
+        await interaction.response.edit_message(content=f"Administrator is now `{permissions.administrator}` for {role.mention}.", view=None)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="Role edit cancelled.", view=None)
+
+
 class CommandMenu(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -459,10 +515,11 @@ class CommandMenu(commands.Cog):
             return
         if not await self.bot_can_manage_role(interaction, above_role):
             return
-        max_position = interaction.guild.me.top_role.position - 1
-        position = min(above_role.position + 1, max_position)
-        await role.edit(position=position, reason=f"Owner role move by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} above {above_role.mention}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Confirm moving {role.mention} above {above_role.mention}.",
+            view=OwnerRoleConfirmView(self, "move_above", role, above_role),
+            ephemeral=True,
+        )
 
     @ownerrole.command(name="move_below", description="OWNER_IDS only: move a role below another role")
     async def ownerrole_move_below(self, interaction: discord.Interaction, role: discord.Role, below_role: discord.Role) -> None:
@@ -472,8 +529,11 @@ class CommandMenu(commands.Cog):
             return
         if not await self.bot_can_manage_role(interaction, below_role):
             return
-        await role.edit(position=below_role.position, reason=f"Owner role move by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} below {below_role.mention}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Confirm moving {role.mention} below {below_role.mention}.",
+            view=OwnerRoleConfirmView(self, "move_below", role, below_role),
+            ephemeral=True,
+        )
 
     @ownerrole.command(name="move_top", description="OWNER_IDS only: move a role as high as the bot can")
     async def ownerrole_move_top(self, interaction: discord.Interaction, role: discord.Role) -> None:
@@ -481,9 +541,11 @@ class CommandMenu(commands.Cog):
             return
         if not await self.bot_can_manage_role(interaction, role):
             return
-        position = interaction.guild.me.top_role.position - 1
-        await role.edit(position=position, reason=f"Owner role move top by {interaction.user}")
-        await interaction.response.send_message(f"Moved {role.mention} as high as I can place it.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Confirm moving {role.mention} as high as I can place it.",
+            view=OwnerRoleConfirmView(self, "move_top", role),
+            ephemeral=True,
+        )
 
     @ownerrole.command(name="create", description="OWNER_IDS only: create a high role")
     async def ownerrole_create(
@@ -535,10 +597,13 @@ class CommandMenu(commands.Cog):
             state = "already has" if enabled else "already does not have"
             await interaction.response.send_message(f"{role.mention} {state} Administrator.", ephemeral=True)
             return
-        permissions.administrator = enabled
-        await role.edit(permissions=permissions, reason=f"Owner role admin {'enabled' if enabled else 'disabled'} by {interaction.user}")
-        state = "gave Administrator to" if enabled else "removed Administrator from"
-        await interaction.response.send_message(f"I {state} {role.mention}.", ephemeral=True)
+        action = "admin_on" if enabled else "admin_off"
+        state = "giving Administrator to" if enabled else "removing Administrator from"
+        await interaction.response.send_message(
+            f"Confirm {state} {role.mention}.",
+            view=OwnerRoleConfirmView(self, action, role),
+            ephemeral=True,
+        )
 
     @ownerrole.command(name="admin_on", description="OWNER_IDS only: give Administrator to a role")
     async def ownerrole_admin_on(self, interaction: discord.Interaction, role: discord.Role) -> None:
@@ -554,11 +619,11 @@ class CommandMenu(commands.Cog):
             return
         if not await self.bot_can_manage_role(interaction, role):
             return
-        permissions = role.permissions
-        permissions.administrator = not permissions.administrator
-        await role.edit(permissions=permissions, reason=f"Owner role admin toggled by {interaction.user}")
-        state = "on" if permissions.administrator else "off"
-        await interaction.response.send_message(f"Administrator is now `{state}` for {role.mention}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Confirm toggling Administrator on {role.mention}.",
+            view=OwnerRoleConfirmView(self, "admin_toggle", role),
+            ephemeral=True,
+        )
 
     async def prefix_owner_role_allowed(self, ctx: commands.Context) -> bool:
         if ctx.guild is None or not isinstance(ctx.author, discord.Member):

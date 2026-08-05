@@ -41,6 +41,9 @@ class Settings:
     openai_api_key: str | None
     backup_webhook_url: str | None
     auto_sync_commands: bool
+    dashboard_enabled: bool
+    dashboard_token: str | None
+    dashboard_port: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -66,4 +69,7 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             backup_webhook_url=os.getenv("BACKUP_WEBHOOK_URL") or None,
             auto_sync_commands=_bool(os.getenv("AUTO_SYNC_COMMANDS"), False),
+            dashboard_enabled=_bool(os.getenv("DASHBOARD_ENABLED"), True),
+            dashboard_token=os.getenv("DASHBOARD_TOKEN") or None,
+            dashboard_port=int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080"))),
         )

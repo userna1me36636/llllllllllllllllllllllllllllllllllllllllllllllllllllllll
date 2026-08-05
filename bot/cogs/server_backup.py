@@ -19,6 +19,30 @@ def make_code(length: int = 10) -> str:
     return "-".join("".join(secrets.choice(alphabet) for _ in range(5)) for _ in range(2))
 
 
+class RestoreConfirmView(discord.ui.View):
+    def __init__(self, cog: "ServerBackup", code: str) -> None:
+        super().__init__(timeout=90)
+        self.cog = cog
+        self.code = code
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        perms = interaction.user.guild_permissions if isinstance(interaction.user, discord.Member) else None
+        if perms and perms.manage_guild:
+            return True
+        await interaction.response.send_message("You need Manage Server to confirm this restore.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Confirm Restore", style=discord.ButtonStyle.danger)
+    async def confirm_restore(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await self.cog.perform_restore(interaction, self.code)
+        await interaction.followup.send(result, ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.edit_message(content="Restore cancelled.", embed=None, view=None)
+
+
 class ServerBackup(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -116,11 +140,22 @@ class ServerBackup(commands.Cog):
     @backup.command(name="restore", description="Restore roles/channels/settings from a backup code")
     @app_admin()
     async def restore(self, interaction: discord.Interaction, code: str) -> None:
-        await interaction.response.defer(ephemeral=True)
         row = await self.bot.db.fetchrow("SELECT snapshot FROM backup_codes WHERE code=? AND used=0", code.upper())
         if row is None:
-            await interaction.followup.send("Backup code not found or already used.", ephemeral=True)
+            await interaction.response.send_message("Backup code not found or already used.", ephemeral=True)
             return
+        data = json.loads(row["snapshot"])
+        summary = (
+            f"This will add up to `{len(data.get('roles', []))}` roles, "
+            f"`{len(data.get('categories', []))}` categories, and "
+            f"`{len(data.get('channels', []))}` channels.\nPress Confirm Restore to continue."
+        )
+        await interaction.response.send_message(embed=embed("Confirm Backup Restore", summary), view=RestoreConfirmView(self, code.upper()), ephemeral=True)
+
+    async def perform_restore(self, interaction: discord.Interaction, code: str) -> str:
+        row = await self.bot.db.fetchrow("SELECT snapshot FROM backup_codes WHERE code=? AND used=0", code.upper())
+        if row is None:
+            return "Backup code not found or already used."
         data = json.loads(row["snapshot"])
         role_map: dict[int, discord.Role] = {}
         for role_data in data["roles"]:
@@ -161,7 +196,7 @@ class ServerBackup(commands.Cog):
         for key, value in data.get("settings", {}).items():
             await self.bot.db.set_settings_value(interaction.guild_id, key, value, self.bot.settings.default_prefix)
         await self.bot.db.execute("UPDATE backup_codes SET used=1 WHERE code=?", code.upper())
-        await interaction.followup.send("Backup restored. Discord may take a minute to show every channel and role.", ephemeral=True)
+        return "Backup restored. Discord may take a minute to show every channel and role."
 
 
 async def setup(bot: commands.Bot) -> None:
