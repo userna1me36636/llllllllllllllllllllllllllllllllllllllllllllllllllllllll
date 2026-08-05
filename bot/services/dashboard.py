@@ -24,26 +24,31 @@ def dashboard_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AinBot Control</title>
   <style>
-    :root { color-scheme: dark; --bg:#07070b; --panel:rgba(255,255,255,.075); --line:rgba(255,255,255,.22); --red:rgba(178,24,44,.42); --text:#f7f2f5; --muted:#b8aeb8; --hot:#ff4f73; }
+    :root { color-scheme: dark; --bg:#07070b; --panel:rgba(255,255,255,.075); --line:rgba(255,255,255,.22); --red:rgba(178,24,44,.42); --text:#f7f2f5; --muted:#d7ccd7; --hot:#ff4f73; --a:#ff3864; --b:#8f5cff; --c:#20d3ff; --d:#42ff9e; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; background:radial-gradient(circle at top left, rgba(255,79,115,.25), transparent 28rem), linear-gradient(135deg,#07070b,#171017 65%,#240611); color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; }
+    body { margin:0; min-height:100vh; background:linear-gradient(125deg,#09070d,#1b0820,#071827,#10110a,#220811); background-size:520% 520%; color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; animation:auroraShift 28s ease-in-out infinite; position:relative; overflow-x:hidden; }
+    body::before { content:""; position:fixed; inset:-18%; pointer-events:none; background:radial-gradient(circle at 15% 20%, rgba(255,56,100,.42), transparent 28%), radial-gradient(circle at 78% 12%, rgba(143,92,255,.38), transparent 30%), radial-gradient(circle at 88% 72%, rgba(32,211,255,.3), transparent 28%), radial-gradient(circle at 18% 84%, rgba(66,255,158,.2), transparent 30%); filter:blur(20px); opacity:.75; animation:glowDrift 34s ease-in-out infinite alternate; }
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size:42px 42px; mask-image:linear-gradient(to bottom, rgba(0,0,0,.72), transparent 85%); }
+    @keyframes auroraShift { 0%{background-position:0% 50%;} 33%{background-position:80% 20%;} 66%{background-position:20% 90%;} 100%{background-position:0% 50%;} }
+    @keyframes glowDrift { 0%{transform:translate3d(-2%, -1%, 0) rotate(0deg) scale(1);} 50%{transform:translate3d(2%, 2%, 0) rotate(8deg) scale(1.05);} 100%{transform:translate3d(0, -2%, 0) rotate(-6deg) scale(1.02);} }
+    @keyframes borderPulse { 0%,100%{border-color:rgba(255,255,255,.2); box-shadow:0 20px 80px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.14);} 50%{border-color:rgba(143,92,255,.52); box-shadow:0 20px 90px rgba(32,211,255,.14), inset 0 1px 0 rgba(255,255,255,.22);} }
     .wrap { width:min(1180px, calc(100% - 28px)); margin:0 auto; padding:28px 0; }
     header { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-bottom:18px; }
     h1 { margin:0; font-size:clamp(30px,5vw,58px); letter-spacing:0; }
     h2 { margin:0 0 12px; font-size:20px; }
     p { color:var(--muted); line-height:1.5; }
     .grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; align-items:start; }
-    .panel { border:1px solid var(--line); background:linear-gradient(145deg,var(--red),rgba(255,255,255,.055)); backdrop-filter:blur(16px); border-radius:8px; padding:16px; box-shadow:0 20px 80px rgba(0,0,0,.35); }
-    .card { border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.22); border-radius:8px; padding:12px; margin-top:10px; }
+    .panel { border:1px solid var(--line); background:linear-gradient(145deg,rgba(255,56,100,.18),rgba(143,92,255,.13),rgba(32,211,255,.08),rgba(255,255,255,.05)); backdrop-filter:blur(18px) saturate(140%); border-radius:8px; padding:16px; animation:borderPulse 12s ease-in-out infinite; position:relative; z-index:1; }
+    .card { border:1px solid rgba(255,255,255,.16); background:linear-gradient(145deg,rgba(0,0,0,.38),rgba(255,255,255,.06)); border-radius:8px; padding:12px; margin-top:10px; box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
     label { display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }
     input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:#171017; color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
     option { background:#171017; color:#f7f2f5; }
     option:checked, option:hover { background:#b2182c; color:#fff; }
-    button { border:1px solid rgba(255,255,255,.28); background:rgba(255,255,255,.11); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; }
+    button { border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18),rgba(32,211,255,.13)); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; box-shadow:inset 0 1px 0 rgba(255,255,255,.14); }
     button:hover { border-color:var(--hot); }
     .row { display:flex; gap:8px; }
     .row > * { flex:1; }
-    .pill { display:inline-flex; border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:6px 9px; margin:3px; color:#fff; background:rgba(255,255,255,.08); font-size:12px; }
+    .pill { display:inline-flex; border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:6px 9px; margin:3px; color:#fff; background:linear-gradient(135deg,rgba(255,56,100,.18),rgba(32,211,255,.12)); font-size:12px; }
     .cmd { display:grid; grid-template-columns: minmax(130px, 220px) 1fr; gap:10px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,.11); }
     .cmd:last-child { border-bottom:0; }
     .cmd b { color:#fff; }
@@ -56,6 +61,7 @@ def dashboard_html() -> str:
     .stat span { color:var(--muted); font-size:12px; }
     textarea { width:100%; min-height:92px; resize:vertical; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:11px 12px; outline:none; font:inherit; }
     .wide { grid-column:1 / -1; }
+    @media (prefers-reduced-motion: reduce) { body, body::before, .panel { animation:none; } }
     @media (max-width: 820px) { .grid { grid-template-columns:1fr; } header { display:block; } }
   </style>
 </head>
@@ -120,6 +126,13 @@ def dashboard_html() -> str:
         <h2>Ask What You Need</h2>
         <div class="row"><input id="query" placeholder="example: stop raids, make a jtc, play music, lock vc"><button onclick="search()">Search</button></div>
         <div id="summary" class="card"></div>
+        <div class="card">
+          <h2>Command Assistant</h2>
+          <label>Ask about commands</label>
+          <textarea id="assistantQuestion" maxlength="900" placeholder="Example: how do I set up anti nuke, make a ticket, or play music?"></textarea>
+          <button onclick="askAssistant()">Ask Assistant</button>
+          <div id="assistantBox"></div>
+        </div>
         <div class="card">
           <h2>Server Control</h2>
           <div class="row">
@@ -214,6 +227,7 @@ function renderCommands(commands){
 }
 async function loadCommands(){ const data = await api('/api/guild/' + guild() + '/commands'); renderCommands(data.commands); }
 async function search(){ const data = await api('/api/guild/' + guild() + '/search?q=' + encodeURIComponent($('query').value)); renderCommands(data.commands); }
+async function askAssistant(){ const data = await api('/api/guild/' + guild() + '/assistant', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({question:$('assistantQuestion').value})}); $('assistantBox').innerHTML = `<p>${data.answer.replaceAll('\\n','<br>')}</p>` + data.commands.map(c=>`<div class="cmd"><b>${c.name}</b><span>${c.description || 'No description'}</span></div>`).join(''); setStatus('Assistant answered.'); }
 async function savePrefix(){ await api('/api/guild/' + guild() + '/prefix', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({prefix:$('prefix').value})}); setStatus('Prefix saved.'); loadSummary(); }
 async function saveTheme(){ await api('/api/guild/' + guild() + '/theme', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({color:$('color').value})}); setStatus('Theme saved.'); }
 async function feature(enabled){ await api('/api/guild/' + guild() + '/feature', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({feature:$('feature').value, enabled})}); setStatus('Feature updated.'); }
@@ -355,6 +369,70 @@ class Dashboard:
                 commands_out.append(enriched)
         commands_out.sort(key=lambda item: (-item["score"], item["name"]))
         return web.json_response({"commands": commands_out[:30]})
+
+    def command_matches(self, question: str, limit: int = 8) -> list[dict[str, str]]:
+        words = [word for word in question.lower().replace("/", " ").replace(",", " ").split() if len(word) > 1]
+        synonyms = {
+            "raid": ["antinuke", "security", "lockdown"],
+            "nuke": ["antinuke", "whitelist", "security"],
+            "voice": ["vc", "jtc", "music"],
+            "call": ["vc", "jtc", "voice"],
+            "song": ["music", "play", "queue"],
+            "coins": ["economy", "wallet", "shop"],
+            "money": ["economy", "wallet", "shop"],
+            "backup": ["backup", "restore"],
+            "role": ["role", "ownerrole", "autorole"],
+            "ticket": ["ticket"],
+            "welcome": ["welcome"],
+            "logs": ["logs", "usagelogs"],
+        }
+        expanded = set(words)
+        for word in list(words):
+            expanded.update(synonyms.get(word, []))
+        scored = []
+        for item in self.command_list():
+            haystack = f"{item['name']} {item['description']}".lower()
+            score = sum(2 if word in item["name"].lower() else 1 for word in expanded if word in haystack)
+            if score:
+                scored.append((score, item))
+        scored.sort(key=lambda pair: (-pair[0], pair[1]["name"]))
+        return [item for _, item in scored[:limit]]
+
+    async def assistant(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        question = str(body.get("question", "")).strip()[:900]
+        if not question:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Ask a question first."}), content_type="application/json")
+        matches = self.command_matches(question)
+        fallback = "Here are the commands I would try first:\n" + "\n".join(f"- {item['name']}: {item['description']}" for item in matches[:5])
+        fallback += "\n\nTip: run the command in Discord, or use the matching dashboard panel if it exists."
+        api_key = getattr(self.bot.settings, "openai_api_key", None)
+        if not api_key:
+            return web.json_response({"answer": fallback, "commands": matches})
+        prompt = (
+            "You are a Discord bot command helper. Answer briefly and only suggest commands from this list.\n"
+            f"Question: {question}\n"
+            "Commands:\n"
+            + "\n".join(f"{item['name']} - {item['description']}" for item in matches[:12])
+        )
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": os.getenv("OPENAI_DASHBOARD_MODEL", "gpt-4o-mini"),
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 350,
+        }
+        try:
+            async with ClientSession() as session:
+                async with session.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload) as response:
+                    if response.status >= 400:
+                        return web.json_response({"answer": fallback, "commands": matches})
+                    data = await response.json()
+                    answer = data["choices"][0]["message"]["content"]
+                    return web.json_response({"answer": answer[:1800], "commands": matches})
+        except Exception:
+            return web.json_response({"answer": fallback, "commands": matches})
 
     async def set_prefix(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -782,6 +860,7 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/api/guild/{guild_id}/summary", dashboard.summary)
     app.router.add_get("/api/guild/{guild_id}/commands", dashboard.commands)
     app.router.add_get("/api/guild/{guild_id}/search", dashboard.search)
+    app.router.add_post("/api/guild/{guild_id}/assistant", dashboard.assistant)
     app.router.add_post("/api/guild/{guild_id}/prefix", dashboard.set_prefix)
     app.router.add_post("/api/guild/{guild_id}/theme", dashboard.set_theme)
     app.router.add_post("/api/guild/{guild_id}/feature", dashboard.set_feature)
