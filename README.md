@@ -54,6 +54,8 @@ If YouTube or YouTube Music says sign-in/cookies are required, add either `YTDLP
 
 The bot includes `imageio-ffmpeg` so music can still play if Railway does not expose the system `ffmpeg` command. Advanced users can override it with `FFMPEG_PATH`.
 
+Railway also needs Opus for Discord voice. The included `nixpacks.toml` installs it, and advanced users can override the library path with `OPUS_PATH`.
+
 ## Main Commands
 
 - `/help` or `!help`: interactive help

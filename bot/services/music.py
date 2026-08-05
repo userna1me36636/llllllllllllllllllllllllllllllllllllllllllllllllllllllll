@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes.util
 import os
 import tempfile
 from dataclasses import dataclass
@@ -40,6 +41,22 @@ def ffmpeg_executable() -> str:
     return os.getenv("FFMPEG_PATH") or imageio_ffmpeg.get_ffmpeg_exe()
 
 
+def ensure_opus_loaded() -> None:
+    if discord.opus.is_loaded():
+        return
+    opus_path = os.getenv("OPUS_PATH") or ctypes.util.find_library("opus")
+    names = [opus_path, "libopus.so.0", "libopus.so", "opus"]
+    for name in names:
+        if not name:
+            continue
+        try:
+            discord.opus.load_opus(name)
+        except OSError:
+            continue
+        if discord.opus.is_loaded():
+            return
+
+
 @dataclass
 class Track:
     title: str
@@ -73,6 +90,7 @@ class GuildPlayer:
         return tracks
 
     def source(self, track: Track) -> discord.PCMVolumeTransformer:
+        ensure_opus_loaded()
         audio = discord.FFmpegPCMAudio(track.url, executable=ffmpeg_executable(), **FFMPEG_OPTS)
         return discord.PCMVolumeTransformer(audio, volume=self.volume)
 
