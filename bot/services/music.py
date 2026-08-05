@@ -1,23 +1,43 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 import discord
+import imageio_ffmpeg
 import yt_dlp
 
 
-YTDL_OPTS = {
-    "format": "bestaudio/best",
-    "quiet": True,
-    "noplaylist": False,
-    "default_search": "ytsearch",
-    "extract_flat": False,
-}
 FFMPEG_OPTS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn",
 }
+
+
+def ytdl_options() -> dict:
+    opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "noplaylist": False,
+        "default_search": os.getenv("YTDLP_SEARCH_PROVIDER", "ytsearch"),
+        "extract_flat": False,
+    }
+    cookie_file = os.getenv("YTDLP_COOKIES_FILE")
+    cookie_text = os.getenv("YTDLP_COOKIES_TEXT")
+    if cookie_file:
+        opts["cookiefile"] = cookie_file
+    elif cookie_text:
+        path = Path(tempfile.gettempdir()) / "yt-dlp-cookies.txt"
+        path.write_text(cookie_text.replace("\\n", "\n"), encoding="utf-8")
+        opts["cookiefile"] = str(path)
+    return opts
+
+
+def ffmpeg_executable() -> str:
+    return os.getenv("FFMPEG_PATH") or imageio_ffmpeg.get_ffmpeg_exe()
 
 
 @dataclass
@@ -40,7 +60,7 @@ class GuildPlayer:
 
     async def resolve(self, query: str, requester_id: int) -> list[Track]:
         def run() -> dict:
-            with yt_dlp.YoutubeDL(YTDL_OPTS) as ytdl:
+            with yt_dlp.YoutubeDL(ytdl_options()) as ytdl:
                 return ytdl.extract_info(query, download=False)
 
         data = await asyncio.to_thread(run)
@@ -53,7 +73,7 @@ class GuildPlayer:
         return tracks
 
     def source(self, track: Track) -> discord.PCMVolumeTransformer:
-        audio = discord.FFmpegPCMAudio(track.url, **FFMPEG_OPTS)
+        audio = discord.FFmpegPCMAudio(track.url, executable=ffmpeg_executable(), **FFMPEG_OPTS)
         return discord.PCMVolumeTransformer(audio, volume=self.volume)
 
 

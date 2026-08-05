@@ -50,6 +50,10 @@ SQLite is used by default at `data/bot.sqlite3`. Set `DATABASE_URL=postgres://us
 
 Music commands use `yt-dlp` and Discord voice support. Some platforms limit bot playback or require API access. Spotify URLs are resolved as metadata/search terms when credentials are present; playback still uses legally available audio sources.
 
+If YouTube or YouTube Music says sign-in/cookies are required, add either `YTDLP_COOKIES_FILE` or `YTDLP_COOKIES_TEXT` in Railway Variables. `YTDLP_COOKIES_TEXT` should contain a Netscape-format cookies.txt export. Treat it like a password.
+
+The bot includes `imageio-ffmpeg` so music can still play if Railway does not expose the system `ffmpeg` command. Advanced users can override it with `FFMPEG_PATH`.
+
 ## Main Commands
 
 - `/help` or `!help`: interactive help
@@ -65,10 +69,10 @@ Music commands use `yt-dlp` and Discord voice support. Some platforms limit bot 
 - `/level rank`: XP rank card
 - `/giveaway start`: timed giveaways
 - `/economy daily`: economy system
-- `/music play`: queue audio
+- `/music add`: add audio to the queue
+- `/music play`: start the queued audio
 - `/utility ping`, `/utility userinfo`, `/utility poll`, `/utility qr`
 
 ## Backups
 
 Database backups are written to `data/backups` on an interval controlled by `BACKUP_INTERVAL_MINUTES`.
-
