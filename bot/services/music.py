@@ -70,6 +70,9 @@ class Track:
     requester_id: int
     duration: int | None = None
     local_path: str | None = None
+    uploader: str | None = None
+    thumbnail: str | None = None
+    view_count: int | None = None
 
 
 class GuildPlayer:
@@ -92,7 +95,19 @@ class GuildPlayer:
         for item in entries:
             if not item:
                 continue
-            tracks.append(Track(item.get("title", "Unknown track"), item["url"], item.get("webpage_url", query), requester_id, item.get("duration")))
+            tracks.append(
+                Track(
+                    item.get("title", "Unknown track"),
+                    item["url"],
+                    item.get("webpage_url", query),
+                    requester_id,
+                    item.get("duration"),
+                    None,
+                    item.get("uploader") or item.get("channel"),
+                    item.get("thumbnail"),
+                    item.get("view_count"),
+                )
+            )
         return tracks
 
     async def download_track(self, track: Track) -> str:

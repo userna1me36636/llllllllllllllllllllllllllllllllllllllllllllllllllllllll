@@ -46,6 +46,46 @@ class CommandMenu(commands.Cog):
     async def ping(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(f"Pong: {round(self.bot.latency * 1000)}ms")
 
+    @commands.command(name="ainrename", hidden=True)
+    async def ainrename_prefix(self, ctx: commands.Context, *, name: str) -> None:
+        if not await configured_owner(self.bot, ctx.author):
+            await ctx.reply("Only users listed in OWNER_IDS can use this.", mention_author=False)
+            return
+        clean_name = name.strip()[:32]
+        if len(clean_name) < 2:
+            await ctx.reply("Use a name with at least 2 characters.", mention_author=False)
+            return
+        try:
+            await self.bot.user.edit(username=clean_name)
+        except discord.HTTPException as exc:
+            await ctx.reply(f"I could not rename the bot: `{type(exc).__name__}: {str(exc)[:160]}`", mention_author=False)
+            return
+        await ctx.reply(embed=embed("Profile Updated", f"Bot name changed to **{clean_name}**."), mention_author=False)
+
+    @commands.command(name="ainprof", aliases=["ainpfp"], hidden=True)
+    async def ainprof_prefix(self, ctx: commands.Context, *, name: str | None = None) -> None:
+        if not await configured_owner(self.bot, ctx.author):
+            await ctx.reply("Only users listed in OWNER_IDS can use this.", mention_author=False)
+            return
+        if not ctx.message.attachments:
+            await ctx.reply("Attach an image, then run `ainprof optional new name`.", mention_author=False)
+            return
+        attachment = ctx.message.attachments[0]
+        if not (attachment.content_type or "").startswith("image/"):
+            await ctx.reply("Attach a PNG/JPG/WebP image.", mention_author=False)
+            return
+        image_bytes = await attachment.read()
+        kwargs: dict[str, object] = {"avatar": image_bytes}
+        if name:
+            kwargs["username"] = name.strip()[:32]
+        try:
+            await self.bot.user.edit(**kwargs)
+        except discord.HTTPException as exc:
+            await ctx.reply(f"I could not update the bot profile: `{type(exc).__name__}: {str(exc)[:160]}`", mention_author=False)
+            return
+        label = f" and name to **{kwargs['username']}**" if "username" in kwargs else ""
+        await ctx.reply(embed=embed("Profile Updated", f"Changed bot avatar{label}."), mention_author=False)
+
     @app_commands.command(name="sync", description="Owner only: refresh slash commands")
     async def sync(
         self,

@@ -91,6 +91,15 @@ class MusicControls(discord.ui.View):
             e.add_field(name=str(i), value=track.title[:250], inline=False)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
+    @discord.ui.button(label="Song Info", style=discord.ButtonStyle.secondary)
+    async def song_info(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        player = self.cog.manager.get(interaction.guild)
+        track = player.current or (list(player.queue._queue)[0] if not player.queue.empty() else None)
+        if track is None:
+            await interaction.response.send_message("No song loaded yet.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=self.cog.song_info_embed(track), ephemeral=True)
+
     @discord.ui.button(label="Leave", style=discord.ButtonStyle.danger)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         player = self.cog.manager.get(interaction.guild)
@@ -152,6 +161,23 @@ class Music(commands.Cog):
         queue_text = "\n".join(f"`{i}.` {track.title[:80]}" for i, track in enumerate(queue_items, start=1))
         e.add_field(name="Up Next", value=queue_text or "Queue is empty.", inline=False)
         e.set_footer(text="Panel updates when songs change or buttons are used.")
+        return e
+
+    def song_info_embed(self, track: Track) -> discord.Embed:
+        duration = "Unknown"
+        if track.duration:
+            minutes, seconds = divmod(int(track.duration), 60)
+            hours, minutes = divmod(minutes, 60)
+            duration = f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+        e = embed("Song Info", f"[{track.title}]({track.webpage_url})")
+        e.add_field(name="Artist / Channel", value=track.uploader or "Unknown", inline=True)
+        e.add_field(name="Duration", value=duration, inline=True)
+        e.add_field(name="Views", value=f"{track.view_count:,}" if track.view_count else "Unknown", inline=True)
+        e.add_field(name="Requested By", value=f"<@{track.requester_id}>", inline=True)
+        if track.local_path:
+            e.add_field(name="Playback Mode", value="Temp download fallback", inline=True)
+        if track.thumbnail:
+            e.set_thumbnail(url=track.thumbnail)
         return e
 
     async def send_or_update_panel(self, guild: discord.Guild, channel: discord.abc.Messageable) -> None:
@@ -398,6 +424,24 @@ class Music(commands.Cog):
             await interaction.response.send_message("Nothing is playing.", ephemeral=True)
             return
         await interaction.response.send_message(embed=self.panel_embed(interaction.guild), view=MusicControls(self, interaction.guild_id))
+
+    @music.command(name="info", description="Show details about the current or next song")
+    async def info(self, interaction: discord.Interaction) -> None:
+        player = self.manager.get(interaction.guild)
+        track = player.current or (list(player.queue._queue)[0] if not player.queue.empty() else None)
+        if track is None:
+            await interaction.response.send_message("No song loaded yet.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=self.song_info_embed(track), ephemeral=True)
+
+    @commands.command(name="songinfo", aliases=["sinfo", "trackinfo"])
+    async def prefix_song_info(self, ctx: commands.Context) -> None:
+        player = self.manager.get(ctx.guild)
+        track = player.current or (list(player.queue._queue)[0] if not player.queue.empty() else None)
+        if track is None:
+            await ctx.reply("No song loaded yet.", mention_author=False)
+            return
+        await ctx.reply(embed=self.song_info_embed(track), mention_author=False)
 
     @music.command(name="pause", description="Pause playback")
     async def pause(self, interaction: discord.Interaction) -> None:

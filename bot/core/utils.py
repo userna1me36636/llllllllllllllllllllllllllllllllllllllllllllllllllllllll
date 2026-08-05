@@ -10,11 +10,15 @@ from typing import Iterable
 import discord
 
 
-DEFAULT_COLOR = discord.Color.blurple()
+DEFAULT_COLOR = discord.Color.from_rgb(118, 72, 255)
+DARK_PURPLE = discord.Color.from_rgb(39, 18, 76)
+LIGHT_PURPLE = discord.Color.from_rgb(183, 151, 255)
+WHITE = discord.Color.from_rgb(245, 242, 255)
 
 
 def embed(title: str, description: str | None = None, color: discord.Color = DEFAULT_COLOR) -> discord.Embed:
     e = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
+    e.set_footer(text="AinBot • dark purple system")
     return e
 
 
