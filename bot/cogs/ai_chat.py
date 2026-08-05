@@ -7,8 +7,32 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.checks import app_admin
+from bot.core.checks import configured_owner
 from bot.core.utils import embed, pulse_line
+
+
+SENSITIVE_SERVER_WORDS = {
+    "admin",
+    "antinuke",
+    "automod",
+    "backup",
+    "ban",
+    "bans",
+    "channel",
+    "channels",
+    "config",
+    "kick",
+    "logs",
+    "moderation",
+    "owner",
+    "permission",
+    "permissions",
+    "role",
+    "roles",
+    "settings",
+    "timeout",
+    "whitelist",
+}
 
 
 class AiChat(commands.Cog):
@@ -29,19 +53,66 @@ class AiChat(commands.Cog):
     async def save_ai_settings(self, guild_id: int, data: dict) -> None:
         await self.bot.db.set_settings_value(guild_id, "ai_chat", data, self.bot.settings.default_prefix)
 
-    async def ask_ai(self, prompt: str, user: discord.abc.User, guild: discord.Guild | None = None) -> str:
+    async def is_admin_user(self, user: discord.abc.User, guild: discord.Guild | None) -> bool:
+        if await configured_owner(self.bot, user):
+            return True
+        return isinstance(user, discord.Member) and guild is not None and user.guild_permissions.administrator
+
+    def needs_admin_context(self, prompt: str) -> bool:
+        words = {word.strip(".,!?;:()[]{}").lower() for word in prompt.split()}
+        return bool(words & SENSITIVE_SERVER_WORDS)
+
+    async def server_context(self, guild: discord.Guild | None, admin: bool) -> str:
+        if guild is None:
+            return "No server context."
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        basics = [
+            f"Server name: {guild.name}",
+            f"Server ID: {guild.id}",
+            f"Members: {guild.member_count or 'unknown'}",
+            f"Text channels: {len(guild.text_channels)}",
+            f"Voice channels: {len(guild.voice_channels)}",
+            f"Roles: {len(guild.roles)}",
+            f"Default prefix: {settings.get('prefix', self.bot.settings.default_prefix)}",
+        ]
+        if not admin:
+            basics.append("The user is not admin. Do not reveal role lists, channel lists, moderation settings, security config, backups, logs, or private setup details.")
+            return "\n".join(basics)
+
+        role_names = [role.name for role in guild.roles if role.name != "@everyone"][-35:]
+        text_names = [channel.name for channel in guild.text_channels[:35]]
+        voice_names = [channel.name for channel in guild.voice_channels[:35]]
+        deeper = [
+            "The user is admin or OWNER_IDS, so deeper server details are allowed.",
+            f"Roles visible to the bot: {', '.join(role_names) if role_names else 'none'}",
+            f"Text channels visible to the bot: {', '.join(text_names) if text_names else 'none'}",
+            f"Voice channels visible to the bot: {', '.join(voice_names) if voice_names else 'none'}",
+            f"Anti-nuke settings: {settings.get('antinuke', {})}",
+            f"Automod settings: {settings.get('automod', {})}",
+            f"JTC settings: {settings.get('jtc', {})}",
+            f"Welcome settings: {settings.get('welcome', {})}",
+            f"Logs settings: {settings.get('logs', {})}",
+        ]
+        return "\n".join(basics + deeper)
+
+    async def ask_ai(self, prompt: str, user: discord.abc.User, guild: discord.Guild | None = None, admin: bool | None = None) -> str:
         key = self.bot.settings.openai_api_key
         if not key:
             return "AI needs `OPENAI_API_KEY` in Railway Variables."
+        is_admin = await self.is_admin_user(user, guild) if admin is None else admin
+        if self.needs_admin_context(prompt) and not is_admin:
+            return "That is an admin-only server question. Ask someone with Admin or an OWNER_IDS user to use `/ai speak`."
+        context = await self.server_context(guild, is_admin)
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         system = (
             "You are AinBot, a helpful Discord server assistant. "
             "Keep answers short, friendly, and useful. "
             "Understand common abbreviations and slang like idk, tbh, ngl, rn, wtv, wyd, wym, fr, vc, pfp, jtc, mod, and perms. "
-            "Do not help with token stealing, scams, or harmful actions."
+            "Do not help with token stealing, scams, or harmful actions. "
+            "Use the server context when answering server questions. "
+            "If the context says the user is not admin, keep server answers basic and do not reveal private server setup."
         )
-        if guild:
-            system += f" Server name: {guild.name}."
+        system += f"\n\nServer context:\n{context}"
         payload = {
             "model": model,
             "messages": [
@@ -64,7 +135,7 @@ class AiChat(commands.Cog):
         if interaction.guild is None:
             await interaction.response.send_message("Use this in a server.", ephemeral=True)
             return
-        if not interaction.user.guild_permissions.administrator:
+        if not await self.is_admin_user(interaction.user, interaction.guild):
             await interaction.response.send_message("Administrator only.", ephemeral=True)
             return
         settings = await self.ai_settings(interaction.guild_id)
@@ -77,17 +148,21 @@ class AiChat(commands.Cog):
         await interaction.response.send_message(embed=e, ephemeral=True)
 
     async def ai_speak(self, interaction: discord.Interaction, question: str) -> None:
-        await interaction.response.defer()
-        answer = await self.ask_ai(question, interaction.user, interaction.guild)
-        await interaction.followup.send(embed=embed("Ain AI", answer))
+        admin = await self.is_admin_user(interaction.user, interaction.guild)
+        private = admin or self.needs_admin_context(question)
+        await interaction.response.defer(ephemeral=private)
+        answer = await self.ask_ai(question, interaction.user, interaction.guild, admin)
+        await interaction.followup.send(embed=embed("Ain AI", answer), ephemeral=private)
 
     @commands.group(name="ai", aliases=["aic", "a"], invoke_without_command=True)
     async def ai_prefix(self, ctx: commands.Context) -> None:
         await ctx.reply("Use `ai toggle` or `ain speak your question`.", mention_author=False)
 
     @ai_prefix.command(name="toggle", aliases=["tog", "onoff"])
-    @commands.has_permissions(administrator=True)
     async def ai_prefix_toggle(self, ctx: commands.Context, enabled: str | None = None) -> None:
+        if not await self.is_admin_user(ctx.author, ctx.guild):
+            await ctx.reply("Administrator only.", mention_author=False)
+            return
         settings = await self.ai_settings(ctx.guild.id)
         if enabled is None:
             new_state = not settings.get("enabled", False)
@@ -112,20 +187,40 @@ class AiChat(commands.Cog):
         await self.answer_prefix(ctx, question)
 
     async def answer_prefix(self, ctx: commands.Context, question: str) -> None:
+        admin = await self.is_admin_user(ctx.author, ctx.guild)
+        if admin and self.needs_admin_context(question):
+            await ctx.reply("Use `/ai speak` for admin server questions so only you can see the answer.", mention_author=False)
+            return
         async with ctx.typing():
-            answer = await self.ask_ai(question, ctx.author, ctx.guild)
+            answer = await self.ask_ai(question, ctx.author, ctx.guild, admin)
         await ctx.reply(embed=embed("Ain AI", answer), mention_author=False)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None:
             return
-        settings = await self.ai_settings(message.guild.id)
-        if not settings.get("enabled", False):
-            return
         content = message.content.strip()
         lower = content.lower()
         bot_mentioned = self.bot.user in message.mentions if self.bot.user else False
+        direct_prefixes = ("ain speak ", "ain ask ", "ai speak ", "ai ask ")
+        direct_question = None
+        for prefix in direct_prefixes:
+            if lower.startswith(prefix):
+                direct_question = content[len(prefix):].strip()
+                break
+        if direct_question:
+            admin = await self.is_admin_user(message.author, message.guild)
+            if admin and self.needs_admin_context(direct_question):
+                await message.reply("Use `/ai speak` for admin server questions so only you can see the answer.", mention_author=False)
+                return
+            async with message.channel.typing():
+                answer = await self.ask_ai(direct_question, message.author, message.guild, admin)
+            await message.reply(embed=embed("Ain AI", answer), mention_author=False)
+            return
+
+        settings = await self.ai_settings(message.guild.id)
+        if not settings.get("enabled", False):
+            return
         prefixes = ("ain ", "ain,", "ain:", "ai ")
         if not bot_mentioned and not lower.startswith(prefixes):
             return
@@ -138,8 +233,12 @@ class AiChat(commands.Cog):
                 break
         if not cleaned:
             return
+        admin = await self.is_admin_user(message.author, message.guild)
+        if admin and self.needs_admin_context(cleaned):
+            await message.reply("Use `/ai speak` for admin server questions so only you can see the answer.", mention_author=False)
+            return
         async with message.channel.typing():
-            answer = await self.ask_ai(cleaned, message.author, message.guild)
+            answer = await self.ask_ai(cleaned, message.author, message.guild, admin)
         await message.reply(embed=embed("Ain AI", answer), mention_author=False)
 
 

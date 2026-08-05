@@ -56,6 +56,8 @@ The bot includes `imageio-ffmpeg` so music can still play if Railway does not ex
 
 Railway also needs Opus for Discord voice. The included `nixpacks.toml` installs it, and advanced users can override the library path with `OPUS_PATH`.
 
+For extra music/helper bots, create and invite extra Discord bot applications, then put their tokens in `MUSIC_HELPER_TOKENS` separated by commas. The main bot can control up to 10 helper bots with `/music helpers_join`, `/music helpers_leave`, and `/music helpers`.
+
 ## Main Commands
 
 - `/help` or `!help`: interactive help
@@ -73,10 +75,12 @@ Railway also needs Opus for Discord voice. The included `nixpacks.toml` installs
 - `/economy daily`: economy system
 - `/music add`: add audio to the queue
 - `/music play`: start the queued audio
+- `/music helpers_join`: make up to 10 helper bots join your voice channel
+- `/music helpers_leave`: disconnect helper bots
 - `/utility ping`, `/utility userinfo`, `/utility poll`, `/utility qr`
 - `/ai toggle`: turn AI chat on/off
-- `/ai speak`: ask the AI a question
-- `ain speak`: prefix AI chat command
+- `/ai speak`: ask the AI a question; admin or OWNER_IDS server questions are private
+- `ain speak`: quick AI chat command for public/basic questions
 
 ## Backups
 

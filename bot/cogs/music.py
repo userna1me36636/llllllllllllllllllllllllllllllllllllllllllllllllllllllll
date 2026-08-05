@@ -7,8 +7,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot.core.checks import configured_owner
 from bot.core.utils import DEFAULT_COLOR, embed, progress_bar, pulse_line
 from bot.services.music import MusicManager, Track, ffmpeg_candidates
+from bot.services.music_helpers import MusicHelperManager
 
 
 class MusicSearchModal(discord.ui.Modal):
@@ -127,6 +129,11 @@ class Music(commands.Cog):
         self.previous_tracks: dict[int, Track] = {}
         self.playback_attempts: dict[int, int] = {}
         self.theme_colors: dict[int, int] = {}
+        self.helpers = MusicHelperManager()
+        self.bot.loop.create_task(self.helpers.start())
+
+    async def cog_unload(self) -> None:
+        await self.helpers.close()
 
     music = app_commands.Group(name="music", description="Music playback")
 
@@ -172,6 +179,8 @@ class Music(commands.Cog):
         e.add_field(name="Status", value=state, inline=True)
         e.add_field(name="Volume", value=f"{int(player.volume * 100)}%", inline=True)
         e.add_field(name="Loop", value="On" if player.loop_one else "Off", inline=True)
+        if self.helpers.configured_count():
+            e.add_field(name="Helper Bots", value=f"{len(self.helpers.ready_clients())}/{self.helpers.configured_count()} ready", inline=True)
         if current:
             e.add_field(name="Now Playing", value=f"[{current.title}]({current.webpage_url})", inline=False)
             if current.duration:
@@ -588,6 +597,108 @@ class Music(commands.Cog):
             deno_text = f"Missing or failed: {type(exc).__name__}: {str(exc)[:120]}"
         lines.append(f"**Deno**\n`{deno_text[:180]}`")
         await interaction.response.send_message(embed=embed("Music Doctor", "\n\n".join(lines)), ephemeral=True)
+
+    async def can_manage_helpers(self, user: discord.abc.User | None) -> bool:
+        if await configured_owner(self.bot, user):
+            return True
+        return isinstance(user, discord.Member) and (user.guild_permissions.administrator or user.guild_permissions.move_members)
+
+    @music.command(name="helpers", description="Show the extra music helper bots")
+    async def helpers_status(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        rows = self.helpers.status(interaction.guild.id)
+        if not rows:
+            await interaction.response.send_message(
+                embed=embed("Music Helpers", "No helper bots are set yet. Add up to 10 extra bot tokens in `MUSIC_HELPER_TOKENS`."),
+                ephemeral=True,
+            )
+            return
+        lines = []
+        for index, row in enumerate(rows, start=1):
+            state = "ready" if row.ready else "starting"
+            server = "in server" if row.in_server else "not invited"
+            voice = row.connected_channel or "not in voice"
+            lines.append(f"`{index}.` **{row.name}** - {state}, {server}, {voice}")
+        await interaction.response.send_message(embed=embed("Music Helpers", "\n".join(lines)), ephemeral=True)
+
+    @music.command(name="helpers_join", description="Make up to 10 helper bots join your voice channel")
+    async def helpers_join(self, interaction: discord.Interaction, count: app_commands.Range[int, 1, 10] = 10) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        if not await self.can_manage_helpers(interaction.user):
+            await interaction.response.send_message("You need Move Members, Admin, or OWNER_IDS to use helper bots.", ephemeral=True)
+            return
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.response.send_message("Join the voice channel first.", ephemeral=True)
+            return
+        if self.helpers.configured_count() == 0:
+            await interaction.response.send_message("No helper bot tokens are set in `MUSIC_HELPER_TOKENS` yet.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        joined, errors = await self.helpers.summon(interaction.guild.id, interaction.user.voice.channel.id, count)
+        text = f"{joined} helper bot(s) joined or moved to `{interaction.user.voice.channel.name}`."
+        if errors:
+            text += "\n\n" + "\n".join(errors)
+        await interaction.followup.send(embed=embed("Music Helpers Joined", text), ephemeral=True)
+
+    @music.command(name="helpers_leave", description="Disconnect the helper music bots")
+    async def helpers_leave(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        if not await self.can_manage_helpers(interaction.user):
+            await interaction.response.send_message("You need Move Members, Admin, or OWNER_IDS to use helper bots.", ephemeral=True)
+            return
+        left = await self.helpers.release(interaction.guild.id)
+        await interaction.response.send_message(embed=embed("Music Helpers Left", f"Disconnected {left} helper bot(s)."), ephemeral=True)
+
+    @commands.group(name="musicbots", aliases=["helpers", "mbots"], invoke_without_command=True)
+    async def prefix_musicbots(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            return
+        rows = self.helpers.status(ctx.guild.id)
+        if not rows:
+            await ctx.reply("No helper bots are set yet. Add up to 10 tokens in `MUSIC_HELPER_TOKENS`.", mention_author=False)
+            return
+        lines = []
+        for index, row in enumerate(rows, start=1):
+            state = "ready" if row.ready else "starting"
+            server = "in server" if row.in_server else "not invited"
+            voice = row.connected_channel or "not in voice"
+            lines.append(f"`{index}.` **{row.name}** - {state}, {server}, {voice}")
+        await ctx.reply(embed=embed("Music Helpers", "\n".join(lines)), mention_author=False)
+
+    @prefix_musicbots.command(name="join")
+    async def prefix_musicbots_join(self, ctx: commands.Context, count: int = 10) -> None:
+        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+            return
+        if not await self.can_manage_helpers(ctx.author):
+            await ctx.reply("You need Move Members, Admin, or OWNER_IDS to use helper bots.", mention_author=False)
+            return
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.reply("Join the voice channel first.", mention_author=False)
+            return
+        if self.helpers.configured_count() == 0:
+            await ctx.reply("No helper bot tokens are set in `MUSIC_HELPER_TOKENS` yet.", mention_author=False)
+            return
+        joined, errors = await self.helpers.summon(ctx.guild.id, ctx.author.voice.channel.id, max(1, min(count, 10)))
+        text = f"{joined} helper bot(s) joined or moved to `{ctx.author.voice.channel.name}`."
+        if errors:
+            text += "\n\n" + "\n".join(errors)
+        await ctx.reply(embed=embed("Music Helpers Joined", text), mention_author=False)
+
+    @prefix_musicbots.command(name="leave")
+    async def prefix_musicbots_leave(self, ctx: commands.Context) -> None:
+        if ctx.guild is None:
+            return
+        if not await self.can_manage_helpers(ctx.author):
+            await ctx.reply("You need Move Members, Admin, or OWNER_IDS to use helper bots.", mention_author=False)
+            return
+        left = await self.helpers.release(ctx.guild.id)
+        await ctx.reply(embed=embed("Music Helpers Left", f"Disconnected {left} helper bot(s)."), mention_author=False)
 
     @music.command(name="lyrics", description="Show lyrics search guidance")
     async def lyrics(self, interaction: discord.Interaction, song: str | None = None) -> None:
