@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 
 import discord
 from discord import app_commands
@@ -16,6 +17,20 @@ class CommandMenu(commands.Cog):
         self.bot = bot
         self.reaction_roles: dict[tuple[int, int, str], int] = {}
         self.vc_owners: dict[int, int] = {}
+        self.vc_sessions: dict[tuple[int, int], dict[str, float | bool]] = {}
+        self.wizzpro_permissions = (
+            "administrator",
+            "ban_members",
+            "kick_members",
+            "manage_roles",
+            "manage_channels",
+            "manage_guild",
+            "manage_webhooks",
+            "moderate_members",
+            "mute_members",
+            "deafen_members",
+            "move_members",
+        )
 
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
     channel = app_commands.Group(name="channel", description="Channel tools")
@@ -155,6 +170,67 @@ class CommandMenu(commands.Cog):
             return True
         await interaction.response.send_message("Only users listed in OWNER_IDS can use this command.", ephemeral=True)
         return False
+
+    async def apply_wizzpro(self, guild: discord.Guild, enabled: bool, actor: discord.abc.User) -> tuple[int, int]:
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        state = settings.get("wizzpro", {})
+        saved_roles = state.get("saved_roles", {})
+        me = guild.me
+        if me is None:
+            return 0, 0
+
+        changed = 0
+        failed = 0
+        bot_role_ids = {role.id for role in me.roles}
+
+        if enabled:
+            saved_roles = {}
+            for role in guild.roles:
+                if role.is_default() or role.managed or role.id in bot_role_ids or role >= me.top_role:
+                    continue
+                permissions = role.permissions
+                if not any(getattr(permissions, name, False) for name in self.wizzpro_permissions):
+                    continue
+                saved_roles[str(role.id)] = permissions.value
+                for name in self.wizzpro_permissions:
+                    setattr(permissions, name, False)
+                try:
+                    await role.edit(permissions=permissions, reason=f"WizzPro enabled by {actor}")
+                    changed += 1
+                except discord.HTTPException:
+                    failed += 1
+            state = {"enabled": True, "saved_roles": saved_roles}
+        else:
+            for role_id, value in list(saved_roles.items()):
+                role = guild.get_role(int(role_id))
+                if role is None:
+                    continue
+                if role.is_default() or role.managed or role.id in bot_role_ids or role >= me.top_role:
+                    failed += 1
+                    continue
+                try:
+                    await role.edit(permissions=discord.Permissions(int(value)), reason=f"WizzPro disabled by {actor}")
+                    changed += 1
+                except discord.HTTPException:
+                    failed += 1
+            state = {"enabled": False, "saved_roles": {}}
+
+        await self.bot.db.set_settings_value(guild.id, "wizzpro", state, self.bot.settings.default_prefix)
+        return changed, failed
+
+    @app_commands.command(name="wizzpro", description="OWNER_IDS only: toggle emergency role permission lockdown")
+    async def wizzpro_slash(self, interaction: discord.Interaction) -> None:
+        if not await self.owner_role_allowed(interaction):
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        settings = await self.bot.db.get_settings(interaction.guild.id, self.bot.settings.default_prefix)
+        enabled = not settings.get("wizzpro", {}).get("enabled", False)
+        changed, failed = await self.apply_wizzpro(interaction.guild, enabled, interaction.user)
+        state = "ON" if enabled else "OFF"
+        await interaction.followup.send(f"WizzPro is now `{state}`. Changed `{changed}` roles. Failed/skipped `{failed}` roles.", ephemeral=True)
 
     async def bot_can_manage_role(self, interaction: discord.Interaction, role: discord.Role) -> bool:
         me = interaction.guild.me if interaction.guild else None
@@ -304,6 +380,16 @@ class CommandMenu(commands.Cog):
         await ctx.reply("Only users listed in OWNER_IDS can use this command.", mention_author=False)
         return False
 
+    @commands.command(name="wizzpro", hidden=True)
+    async def wizzpro_prefix(self, ctx: commands.Context) -> None:
+        if not await self.prefix_owner_role_allowed(ctx):
+            return
+        settings = await self.bot.db.get_settings(ctx.guild.id, self.bot.settings.default_prefix)
+        enabled = not settings.get("wizzpro", {}).get("enabled", False)
+        changed, failed = await self.apply_wizzpro(ctx.guild, enabled, ctx.author)
+        state = "ON" if enabled else "OFF"
+        await ctx.reply(f"WizzPro is now `{state}`. Changed `{changed}` roles. Failed/skipped `{failed}` roles.", mention_author=False)
+
     async def prefix_bot_can_manage_role(self, ctx: commands.Context, role: discord.Role) -> bool:
         me = ctx.guild.me if ctx.guild else None
         if me is None:
@@ -426,6 +512,75 @@ class CommandMenu(commands.Cog):
                 return channel
         return None
 
+    @staticmethod
+    def format_vc_time(seconds: int) -> str:
+        hours, remainder = divmod(max(0, seconds), 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{hours}h {minutes}m"
+
+    async def save_vc_session_time(self, guild_id: int, user_id: int, now: float) -> None:
+        key = (guild_id, user_id)
+        session = self.vc_sessions.get(key)
+        if not session:
+            return
+        elapsed = max(0, int(now - float(session["last_at"])))
+        if elapsed <= 0:
+            session["last_at"] = now
+            return
+        voice_seconds = elapsed
+        stream_seconds = elapsed if bool(session.get("streaming")) else 0
+        camera_seconds = elapsed if bool(session.get("camera")) else 0
+        await self.bot.db.execute(
+            "INSERT INTO voice_stats(guild_id,user_id,voice_seconds,stream_seconds,camera_seconds) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(guild_id,user_id) DO UPDATE SET "
+            "voice_seconds=voice_seconds+excluded.voice_seconds,"
+            "stream_seconds=stream_seconds+excluded.stream_seconds,"
+            "camera_seconds=camera_seconds+excluded.camera_seconds",
+            guild_id,
+            user_id,
+            voice_seconds,
+            stream_seconds,
+            camera_seconds,
+        )
+        session["last_at"] = now
+
+    async def flush_guild_vc_sessions(self, guild_id: int) -> None:
+        now = time.time()
+        for session_guild_id, user_id in list(self.vc_sessions):
+            if session_guild_id == guild_id:
+                await self.save_vc_session_time(guild_id, user_id, now)
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        now = time.time()
+        for guild in self.bot.guilds:
+            for channel in guild.voice_channels:
+                for member in channel.members:
+                    if member.bot:
+                        continue
+                    self.vc_sessions[(guild.id, member.id)] = {
+                        "last_at": now,
+                        "streaming": bool(member.voice and member.voice.self_stream),
+                        "camera": bool(member.voice and member.voice.self_video),
+                    }
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
+        if member.bot:
+            return
+        key = (member.guild.id, member.id)
+        now = time.time()
+        if key in self.vc_sessions:
+            await self.save_vc_session_time(member.guild.id, member.id, now)
+        if after.channel is None:
+            self.vc_sessions.pop(key, None)
+            return
+        self.vc_sessions[key] = {
+            "last_at": now,
+            "streaming": bool(after.self_stream),
+            "camera": bool(after.self_video),
+        }
+
     @vc.command(name="claim", description="Claim an ownerless temporary voice channel")
     async def vc_claim(self, interaction: discord.Interaction) -> None:
         member = interaction.user
@@ -532,6 +687,30 @@ class CommandMenu(commands.Cog):
     async def vc_godmodelist(self, interaction: discord.Interaction) -> None:
         settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
         await interaction.response.send_message(", ".join(f"<@{uid}>" for uid in settings.get("vc_godmode", [])) or "No VC God Mode members.", ephemeral=True)
+
+    @vc.command(name="leaderboard", description="Show voice, stream, and camera hour leaders")
+    async def vc_leaderboard(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        await self.flush_guild_vc_sessions(interaction.guild_id)
+        rows = await self.bot.db.fetchall(
+            "SELECT user_id,voice_seconds,stream_seconds,camera_seconds FROM voice_stats "
+            "WHERE guild_id=? ORDER BY voice_seconds DESC LIMIT 10",
+            interaction.guild_id,
+        )
+        e = embed("VC Hours Leaderboard")
+        if not rows:
+            e.description = "No VC time has been tracked yet."
+        for index, row in enumerate(rows, start=1):
+            e.add_field(
+                name=f"#{index} - <@{row['user_id']}>",
+                value=(
+                    f"Voice: `{self.format_vc_time(row['voice_seconds'])}`\n"
+                    f"Stream: `{self.format_vc_time(row['stream_seconds'])}`\n"
+                    f"Camera: `{self.format_vc_time(row['camera_seconds'])}`"
+                ),
+                inline=False,
+            )
+        await interaction.followup.send(embed=e)
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:

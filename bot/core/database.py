@@ -95,6 +95,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
   data TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS voice_stats (
+  guild_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  voice_seconds INTEGER NOT NULL DEFAULT 0,
+  stream_seconds INTEGER NOT NULL DEFAULT 0,
+  camera_seconds INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (guild_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS backup_codes (
   code TEXT PRIMARY KEY,
   guild_id INTEGER NOT NULL,
