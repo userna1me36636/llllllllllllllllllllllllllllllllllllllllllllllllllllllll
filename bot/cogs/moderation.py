@@ -31,6 +31,13 @@ class Moderation(commands.Cog):
             guild_id, user_id, mod_id, action, reason, expires_at,
         )
 
+    async def get_foreverbans(self, guild_id: int) -> dict[str, dict[str, str | int]]:
+        settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
+        return settings.get("foreverbans", {})
+
+    async def save_foreverbans(self, guild_id: int, foreverbans: dict[str, dict[str, str | int]]) -> None:
+        await self.bot.db.set_settings_value(guild_id, "foreverbans", foreverbans, self.bot.settings.default_prefix)
+
     @commands.hybrid_command(name="ban")
     @has_guild_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided") -> None:
@@ -74,6 +81,41 @@ class Moderation(commands.Cog):
         await self.bot.db.execute("INSERT INTO temp_actions(guild_id,user_id,action,expires_at) VALUES(?,?,?,?)", ctx.guild.id, member.id, "unban", expires.timestamp())
         case_id = await self.case(ctx.guild.id, member.id, ctx.author.id, "tempban", reason, expires.isoformat())
         await ctx.reply(embed=embed("Tempbanned", f"{member} until {discord.utils.format_dt(expires)}.\nCase `#{case_id}`"), mention_author=False)
+
+    @commands.hybrid_group(name="foreverban", invoke_without_command=True)
+    @has_guild_permissions(ban_members=True)
+    async def foreverban(self, ctx: commands.Context, user: discord.User, *, reason: str = "Forever banned") -> None:
+        if ctx.guild is None:
+            return
+        member = ctx.guild.get_member(user.id)
+        if member and await self.protected(ctx.guild.id, member, ctx.author):
+            await ctx.reply("That member is protected.", mention_author=False)
+            return
+        foreverbans = await self.get_foreverbans(ctx.guild.id)
+        foreverbans[str(user.id)] = {"reason": reason, "moderator_id": ctx.author.id}
+        await self.save_foreverbans(ctx.guild.id, foreverbans)
+        await ctx.guild.ban(user, reason=f"Foreverban by {ctx.author}: {reason}", delete_message_days=0)
+        case_id = await self.case(ctx.guild.id, user.id, ctx.author.id, "foreverban", reason)
+        await ctx.reply(embed=embed("Forever Banned", f"{user.mention} will be banned again if unbanned or if they rejoin.\nCase `#{case_id}`"), mention_author=False)
+
+    @foreverban.command(name="remove")
+    @has_guild_permissions(ban_members=True)
+    async def foreverban_remove(self, ctx: commands.Context, user_id: int) -> None:
+        foreverbans = await self.get_foreverbans(ctx.guild.id)
+        foreverbans.pop(str(user_id), None)
+        await self.save_foreverbans(ctx.guild.id, foreverbans)
+        await ctx.reply(f"Foreverban removed for `{user_id}`.", mention_author=False)
+
+    @foreverban.command(name="list")
+    @has_guild_permissions(ban_members=True)
+    async def foreverban_list(self, ctx: commands.Context) -> None:
+        foreverbans = await self.get_foreverbans(ctx.guild.id)
+        e = embed("Foreverban List")
+        if not foreverbans:
+            e.description = "No foreverbans set."
+        for user_id, data in list(foreverbans.items())[:20]:
+            e.add_field(name=user_id, value=str(data.get("reason", "No reason"))[:300], inline=False)
+        await ctx.reply(embed=e, mention_author=False)
 
     @commands.hybrid_command(name="unban")
     @has_guild_permissions(ban_members=True)
@@ -178,6 +220,20 @@ class Moderation(commands.Cog):
         await self.case(interaction.guild_id, member.id, interaction.user.id, "ban", reason)
         await interaction.response.send_message(embed=embed("Banned", member.mention))
 
+    @mod.command(name="foreverban", description="Ban a user and keep them banned if unbanned or rejoining")
+    @app_commands.default_permissions(ban_members=True)
+    async def slash_foreverban(self, interaction: discord.Interaction, user: discord.User, reason: str = "Forever banned") -> None:
+        member = interaction.guild.get_member(user.id)
+        if member and await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected.", ephemeral=True)
+            return
+        foreverbans = await self.get_foreverbans(interaction.guild_id)
+        foreverbans[str(user.id)] = {"reason": reason, "moderator_id": interaction.user.id}
+        await self.save_foreverbans(interaction.guild_id, foreverbans)
+        await interaction.guild.ban(user, reason=f"Foreverban by {interaction.user}: {reason}", delete_message_days=0)
+        await self.case(interaction.guild_id, user.id, interaction.user.id, "foreverban", reason)
+        await interaction.response.send_message(embed=embed("Forever Banned", f"{user.mention} will be banned again if unbanned or if they rejoin."), ephemeral=True)
+
     @mod.command(name="kick", description="Kick a member")
     @app_commands.default_permissions(kick_members=True)
     async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
@@ -228,6 +284,23 @@ class Moderation(commands.Cog):
         for row in rows:
             e.add_field(name=f"#{row['id']} by {row['moderator_id']}", value=f"{row['reason']} | {row['created_at']}", inline=False)
         await interaction.response.send_message(embed=e, ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        foreverbans = await self.get_foreverbans(member.guild.id)
+        data = foreverbans.get(str(member.id))
+        if data:
+            await member.ban(reason=f"Foreverban re-applied: {data.get('reason', 'No reason')}", delete_message_days=0)
+
+    @commands.Cog.listener()
+    async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
+        foreverbans = await self.get_foreverbans(guild.id)
+        data = foreverbans.get(str(user.id))
+        if data:
+            try:
+                await guild.ban(user, reason=f"Foreverban re-applied after unban: {data.get('reason', 'No reason')}", delete_message_days=0)
+            except discord.HTTPException:
+                pass
 
 
 async def setup(bot: commands.Bot) -> None:

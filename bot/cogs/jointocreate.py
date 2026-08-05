@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -124,6 +126,23 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, view_channel=None)
         await interaction.response.send_message("Voice channel revealed.", ephemeral=True)
 
+    @discord.ui.button(label="Boost Bitrate", style=discord.ButtonStyle.primary)
+    async def boost_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
+            return
+        bitrate = min(channel.guild.bitrate_limit, 128000)
+        await channel.edit(bitrate=int(bitrate), reason=f"Booster VC bitrate by {interaction.user}")
+        await interaction.response.send_message("Booster bitrate applied to this VC.", ephemeral=True)
+
+    @discord.ui.button(label="Boost Privacy", style=discord.ButtonStyle.primary)
+    async def boost_privacy(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
+            return
+        await channel.set_permissions(channel.guild.default_role, connect=False, view_channel=True)
+        await interaction.response.send_message("Booster privacy turned on. Use Unlock when you want to open it again.", ephemeral=True)
+
 
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -157,11 +176,65 @@ class JoinToCreate(commands.Cog):
             await interaction.response.send_message("Only the VC owner or moderators can use this.", ephemeral=True)
         return False
 
+    async def can_use_booster_perk(self, interaction: discord.Interaction, channel: discord.VoiceChannel) -> bool:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return False
+        if not interaction.user.premium_since and not interaction.user.guild_permissions.manage_channels:
+            await interaction.response.send_message("This is a booster-only VC perk. Mods can use it too.", ephemeral=True)
+            return False
+        return await self.can_control(interaction, channel)
+
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
         e = embed("Voice Control Panel", f"Owner: {owner.mention}\nUse the buttons below to control {channel.mention}.")
         e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
+        e.add_field(name="Booster Perks", value="Boost Bitrate and Boost Privacy are booster-only VC tools. Mods can use them too.", inline=False)
         e.set_footer(text="This panel stays with the temp VC and deletes when the VC is empty.")
         return e
+
+    async def voice_mute_actor(self, guild: discord.Guild, target: discord.Member) -> discord.Member | None:
+        try:
+            async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_update):
+                if entry.target and entry.target.id == target.id and (discord.utils.utcnow() - entry.created_at).total_seconds() <= 10:
+                    return entry.user if isinstance(entry.user, discord.Member) else None
+        except discord.HTTPException:
+            return None
+        return None
+
+    async def warn_bad_vc_mute(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
+        if before.mute or not after.mute:
+            return
+        channel = after.channel or before.channel
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+        actor = await self.voice_mute_actor(member.guild, member)
+        if actor is None or actor.bot:
+            return
+        settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
+        saved = settings.get("jtc_temp_channels", {}).get(str(channel.id), {})
+        owner_id = self.owners.get(channel.id) or saved.get("owner_id")
+        if actor.id == owner_id:
+            return
+        now = time.time()
+        all_strikes = settings.get("vc_mute_strikes", {})
+        strike_key = f"{actor.id}:{channel.id}"
+        strikes = [float(stamp) for stamp in all_strikes.get(strike_key, []) if now - float(stamp) < 1800]
+        strikes.append(now)
+        all_strikes[strike_key] = strikes[-3:]
+        await self.bot.db.set_settings_value(member.guild.id, "vc_mute_strikes", all_strikes, self.bot.settings.default_prefix)
+        count = len(all_strikes[strike_key])
+        title = "VC Mute Final Warning" if count >= 3 else "VC Mute Warning"
+        text = (
+            f"{actor.mention}, you server-muted {member.mention} in a VC you do not own.\n"
+            f"Strikes in this VC: `{count}/3`\n"
+            "Strikes reset after 30 minutes."
+        )
+        if count >= 3:
+            text += "\nThis is the last warning for this VC."
+        try:
+            await channel.send(embed=embed(title, text))
+        except discord.HTTPException:
+            pass
 
     async def send_control_panel(self, channel: discord.VoiceChannel, owner: discord.Member) -> None:
         try:
@@ -281,6 +354,7 @@ class JoinToCreate(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
+        await self.warn_bad_vc_mute(member, before, after)
         if after.channel:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             template = settings.get("jtc_templates", {}).get(str(after.channel.id))
