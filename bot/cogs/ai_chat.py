@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 
 import aiohttp
 import discord
@@ -123,13 +124,28 @@ class AiChat(commands.Cog):
             "max_tokens": 450,
         }
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=45) as resp:
-                data = await resp.json()
-                if resp.status >= 400:
-                    message = data.get("error", {}).get("message", "AI request failed.")
-                    return f"AI error: `{message[:400]}`"
-        return data["choices"][0]["message"]["content"][:1900]
+        timeout = aiohttp.ClientTimeout(total=25)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload) as resp:
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        text = await resp.text()
+                        return f"AI error: OpenAI sent a bad response: `{text[:350]}`"
+                    if resp.status >= 400:
+                        message = data.get("error", {}).get("message", "AI request failed.")
+                        return f"AI error: `{message[:400]}`"
+        except asyncio.TimeoutError:
+            return "AI error: OpenAI took too long to answer. Try again in a minute."
+        except aiohttp.ClientError as exc:
+            return f"AI error: Could not connect to OpenAI: `{type(exc).__name__}`."
+        except Exception as exc:
+            return f"AI error: `{type(exc).__name__}: {str(exc)[:300]}`"
+        try:
+            return data["choices"][0]["message"]["content"][:1900]
+        except Exception:
+            return "AI error: OpenAI answered, but I could not read the message."
 
     async def ai_toggle(self, interaction: discord.Interaction, enabled: bool | None = None) -> None:
         if interaction.guild is None:
