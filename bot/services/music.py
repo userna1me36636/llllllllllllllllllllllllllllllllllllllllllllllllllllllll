@@ -46,6 +46,14 @@ def ensure_opus_loaded() -> None:
         return
     opus_path = os.getenv("OPUS_PATH") or ctypes.util.find_library("opus")
     names = [opus_path, "libopus.so.0", "libopus.so", "opus"]
+    search_roots = [Path("/nix/store"), Path("/usr/lib"), Path("/usr/local/lib"), Path("/lib")]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        try:
+            names.extend(str(path) for path in root.rglob("libopus.so*"))
+        except OSError:
+            continue
     for name in names:
         if not name:
             continue
@@ -55,6 +63,8 @@ def ensure_opus_loaded() -> None:
             continue
         if discord.opus.is_loaded():
             return
+    checked = ", ".join(str(name) for name in names[:8] if name)
+    raise RuntimeError(f"Opus library was not found. Checked: {checked}")
 
 
 @dataclass
