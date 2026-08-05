@@ -9,7 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.core.checks import app_admin, configured_owner
-from bot.core.utils import embed, parse_duration
+from bot.core.utils import embed, parse_color, parse_duration, pulse_line
 
 
 class CommandMenu(commands.Cog):
@@ -40,11 +40,40 @@ class CommandMenu(commands.Cog):
     reactionrole = app_commands.Group(name="reactionrole", description="Reaction roles")
     remind = app_commands.Group(name="remind", description="Personal reminders")
     role = app_commands.Group(name="role", description="Role tools")
+    theme = app_commands.Group(name="theme", description="Change the bot's server style")
     vc = app_commands.Group(name="vc", description="Temporary voice controls")
 
     @app_commands.command(name="ping", description="Check whether the bot is online")
     async def ping(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(f"Pong: {round(self.bot.latency * 1000)}ms")
+
+    async def save_theme_color(self, guild_id: int, color: discord.Color) -> None:
+        settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
+        theme = settings.get("theme", {})
+        theme["color"] = color.value
+        await self.bot.db.set_settings_value(guild_id, "theme", theme, self.bot.settings.default_prefix)
+        colors = getattr(self.bot, "theme_colors", {})
+        colors[guild_id] = color.value
+        setattr(self.bot, "theme_colors", colors)
+
+    @theme.command(name="color", description="Change the bot embed color for this server")
+    @app_admin()
+    async def theme_color(self, interaction: discord.Interaction, color: str) -> None:
+        try:
+            parsed = parse_color(color)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await self.save_theme_color(interaction.guild_id, parsed)
+        e = embed("Theme Updated", f"{pulse_line()}\n\nServer bot color changed to `{color}`.", parsed)
+        e.add_field(name="Preview", value="Music panels, JTC panels, and new feature embeds will use this color.", inline=False)
+        await interaction.response.send_message(embed=e, ephemeral=True)
+
+    @theme.command(name="preview", description="Preview the current bot theme")
+    async def theme_preview(self, interaction: discord.Interaction) -> None:
+        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+        color = discord.Color(int(settings.get("theme", {}).get("color", 11847423)))
+        await interaction.response.send_message(embed=embed("Theme Preview", pulse_line(), color), ephemeral=True)
 
     @commands.command(name="ainrename", hidden=True)
     async def ainrename_prefix(self, ctx: commands.Context, *, name: str) -> None:
@@ -85,6 +114,31 @@ class CommandMenu(commands.Cog):
             return
         label = f" and name to **{kwargs['username']}**" if "username" in kwargs else ""
         await ctx.reply(embed=embed("Profile Updated", f"Changed bot avatar{label}."), mention_author=False)
+
+    @commands.group(name="theme", invoke_without_command=True)
+    async def theme_prefix(self, ctx: commands.Context) -> None:
+        await ctx.reply("Use `theme color #7648ff` or `theme preview`.", mention_author=False)
+
+    @theme_prefix.command(name="color")
+    async def theme_prefix_color(self, ctx: commands.Context, color: str) -> None:
+        if not ctx.author.guild_permissions.administrator and not await configured_owner(self.bot, ctx.author):
+            await ctx.reply("Administrator or OWNER_IDS only.", mention_author=False)
+            return
+        try:
+            parsed = parse_color(color)
+        except ValueError as exc:
+            await ctx.reply(str(exc), mention_author=False)
+            return
+        await self.save_theme_color(ctx.guild.id, parsed)
+        e = embed("Theme Updated", f"{pulse_line()}\n\nServer bot color changed to `{color}`.", parsed)
+        e.add_field(name="Preview", value="Music panels, JTC panels, and new feature embeds will use this color.", inline=False)
+        await ctx.reply(embed=e, mention_author=False)
+
+    @theme_prefix.command(name="preview")
+    async def theme_prefix_preview(self, ctx: commands.Context) -> None:
+        settings = await self.bot.db.get_settings(ctx.guild.id, self.bot.settings.default_prefix)
+        color = discord.Color(int(settings.get("theme", {}).get("color", 11847423)))
+        await ctx.reply(embed=embed("Theme Preview", pulse_line(), color), mention_author=False)
 
     @app_commands.command(name="sync", description="Owner only: refresh slash commands")
     async def sync(
@@ -646,6 +700,37 @@ class CommandMenu(commands.Cog):
                 return channel
         return None
 
+    def find_voice_channel(self, guild: discord.Guild, name_or_id: str) -> discord.VoiceChannel | None:
+        query = name_or_id.strip()
+        if query.startswith("<#") and query.endswith(">") and query[2:-1].isdigit():
+            channel = guild.get_channel(int(query[2:-1]))
+            return channel if isinstance(channel, discord.VoiceChannel) else None
+        if query.isdigit():
+            channel = guild.get_channel(int(query))
+            return channel if isinstance(channel, discord.VoiceChannel) else None
+        lowered = query.lower()
+        for channel in guild.voice_channels:
+            if channel.name.lower() == lowered:
+                return channel
+        for channel in guild.voice_channels:
+            if lowered in channel.name.lower():
+                return channel
+        return None
+
+    async def can_drag_members(self, actor: discord.Member) -> bool:
+        return actor.guild_permissions.move_members or actor.guild_permissions.administrator or await configured_owner(self.bot, actor)
+
+    async def drag_channel_members(self, actor: discord.Member, source: discord.VoiceChannel, destination: discord.VoiceChannel) -> tuple[int, int]:
+        moved = 0
+        failed = 0
+        for member in list(source.members):
+            try:
+                await member.move_to(destination, reason=f"Drag all by {actor}")
+                moved += 1
+            except discord.HTTPException:
+                failed += 1
+        return moved, failed
+
     @staticmethod
     def format_vc_time(seconds: int) -> str:
         seconds = max(0, int(seconds))
@@ -777,6 +862,53 @@ class CommandMenu(commands.Cog):
         if channel:
             await channel.edit(bitrate=bitrate)
         await interaction.response.send_message("Voice channel bitrate updated.", ephemeral=True)
+
+    @vc.command(name="drag", description="Move everyone from one voice channel to another")
+    @app_commands.default_permissions(move_members=True)
+    async def vc_drag(self, interaction: discord.Interaction, source: discord.VoiceChannel, destination: discord.VoiceChannel) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        if not await self.can_drag_members(interaction.user):
+            await interaction.response.send_message("You need Move Members to use this.", ephemeral=True)
+            return
+        if source.id == destination.id:
+            await interaction.response.send_message("Pick two different voice channels.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        moved, failed = await self.drag_channel_members(interaction.user, source, destination)
+        e = embed("Drag Complete", f"{pulse_line()}\n\nMoved `{moved}` member(s) from **{source.name}** to **{destination.name}**.")
+        if failed:
+            e.add_field(name="Failed", value=f"`{failed}` member(s) could not be moved.", inline=False)
+        await interaction.followup.send(embed=e, ephemeral=True)
+
+    @commands.command(name="drag", aliases=["dragall", "moveall"])
+    async def drag_prefix(self, ctx: commands.Context, *, route: str) -> None:
+        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+            return
+        if not await self.can_drag_members(ctx.author):
+            await ctx.reply("You need Move Members to use this.", mention_author=False)
+            return
+        if " to " not in route.lower():
+            await ctx.reply("Use `drag old call to new call`.", mention_author=False)
+            return
+        left, right = route.rsplit(" to ", 1)
+        source = self.find_voice_channel(ctx.guild, left)
+        destination = self.find_voice_channel(ctx.guild, right)
+        if source is None:
+            await ctx.reply(f"I could not find the source VC `{left.strip()}`.", mention_author=False)
+            return
+        if destination is None:
+            await ctx.reply(f"I could not find the destination VC `{right.strip()}`.", mention_author=False)
+            return
+        if source.id == destination.id:
+            await ctx.reply("Pick two different voice channels.", mention_author=False)
+            return
+        moved, failed = await self.drag_channel_members(ctx.author, source, destination)
+        e = embed("Drag Complete", f"{pulse_line()}\n\nMoved `{moved}` member(s) from **{source.name}** to **{destination.name}**.")
+        if failed:
+            e.add_field(name="Failed", value=f"`{failed}` member(s) could not be moved.", inline=False)
+        await ctx.reply(embed=e, mention_author=False)
 
     @vc.command(name="permit", description="Allow a member into your temporary voice channel")
     async def vc_permit(self, interaction: discord.Interaction, member: discord.Member) -> None:

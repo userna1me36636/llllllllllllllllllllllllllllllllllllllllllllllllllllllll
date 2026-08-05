@@ -74,6 +74,9 @@ Railway also needs Opus for Discord voice. The included `nixpacks.toml` installs
 - `/music add`: add audio to the queue
 - `/music play`: start the queued audio
 - `/utility ping`, `/utility userinfo`, `/utility poll`, `/utility qr`
+- `/ai toggle`: turn AI chat on/off
+- `/ai speak`: ask the AI a question
+- `ain speak`: prefix AI chat command
 
 ## Backups
 

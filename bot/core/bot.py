@@ -30,6 +30,7 @@ COGS: tuple[str, ...] = (
     "bot.cogs.utility",
     "bot.cogs.event_logging",
     "bot.cogs.command_menu",
+    "bot.cogs.ai_chat",
     "bot.cogs.vouch",
     "bot.cogs.server_backup",
 )

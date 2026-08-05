@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin
-from bot.core.utils import embed
+from bot.core.utils import DEFAULT_COLOR, embed, pulse_line
 
 
 class JtcRenameModal(discord.ui.Modal):
@@ -143,11 +143,26 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=False, view_channel=True)
         await interaction.response.send_message("Booster privacy turned on. Use Unlock when you want to open it again.", ephemeral=True)
 
+    @discord.ui.button(label="Play Music", style=discord.ButtonStyle.success)
+    async def play_music(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        await self.cog.start_music_panel(interaction, channel)
+
+    @discord.ui.button(label="Purple Pulse", style=discord.ButtonStyle.primary)
+    async def purple_pulse(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        await interaction.response.send_message(embed=self.cog.pulse_embed(channel.guild), ephemeral=True)
+
 
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.owners: dict[int, int] = {}
+        self.theme_colors: dict[int, int] = {}
         self.cleanup_empty_jtc_channels.start()
 
     def cog_unload(self) -> None:
@@ -185,12 +200,57 @@ class JoinToCreate(commands.Cog):
             return False
         return await self.can_control(interaction, channel)
 
+    async def load_theme(self, guild: discord.Guild) -> None:
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        color = settings.get("theme", {}).get("color")
+        if color:
+            self.theme_colors[guild.id] = int(color)
+            colors = getattr(self.bot, "theme_colors", {})
+            colors[guild.id] = int(color)
+            setattr(self.bot, "theme_colors", colors)
+
+    def theme_color(self, guild: discord.Guild | None) -> discord.Color:
+        if guild is None:
+            return DEFAULT_COLOR
+        cached = self.theme_colors.get(guild.id) or getattr(self.bot, "theme_colors", {}).get(guild.id)
+        return discord.Color(int(cached)) if cached else DEFAULT_COLOR
+
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
-        e = embed("Voice Control Panel", f"Owner: {owner.mention}\nUse the buttons below to control {channel.mention}.")
+        e = embed("Voice Control Panel", f"{pulse_line()}\n\nOwner: {owner.mention}\nUse the buttons below to control {channel.mention}.", self.theme_color(channel.guild))
         e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
         e.add_field(name="Booster Perks", value="Boost Bitrate and Boost Privacy are booster-only VC tools. Mods can use them too.", inline=False)
-        e.set_footer(text="This panel stays with the temp VC and deletes when the VC is empty.")
+        e.add_field(name="Music", value="Press Play Music to bring the bot into this VC and open the music panel.", inline=False)
+        e.add_field(name="Style", value="Purple Pulse refreshes the interface glow for this VC.", inline=False)
+        e.set_footer(text="AinBot JTC | clean purple interface")
         return e
+
+    def pulse_embed(self, guild: discord.Guild | None) -> discord.Embed:
+        e = embed("Purple Pulse", pulse_line(), self.theme_color(guild))
+        e.add_field(name="VC Interface", value="This temp VC panel is using the server theme.", inline=False)
+        return e
+
+    async def start_music_panel(self, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        if interaction.user.voice is None or interaction.user.voice.channel is None or interaction.user.voice.channel.id != channel.id:
+            await interaction.response.send_message("Join this temp VC first, then press Play Music.", ephemeral=True)
+            return
+        music = self.bot.get_cog("Music")
+        if music is None or not hasattr(music, "send_or_update_panel"):
+            await interaction.response.send_message("Music is not loaded on this bot.", ephemeral=True)
+            return
+        vc = channel.guild.voice_client
+        try:
+            if vc is None:
+                await channel.connect(self_deaf=True)
+            elif vc.channel and vc.channel.id != channel.id:
+                await vc.move_to(channel)
+        except discord.HTTPException as exc:
+            await interaction.response.send_message(f"I could not join this VC: `{type(exc).__name__}`", ephemeral=True)
+            return
+        await music.send_or_update_panel(channel.guild, channel)
+        await interaction.response.send_message("Music panel opened for this VC.", ephemeral=True)
 
     async def voice_mute_actor(self, guild: discord.Guild, target: discord.Member) -> discord.Member | None:
         try:
@@ -238,6 +298,7 @@ class JoinToCreate(commands.Cog):
 
     async def send_control_panel(self, channel: discord.VoiceChannel, owner: discord.Member) -> None:
         try:
+            await self.load_theme(channel.guild)
             await channel.send(content=owner.mention, embed=self.control_embed(channel, owner), view=JtcControlView(self, channel.id))
         except discord.HTTPException:
             pass

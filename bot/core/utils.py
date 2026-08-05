@@ -14,12 +14,48 @@ DEFAULT_COLOR = discord.Color.from_rgb(118, 72, 255)
 DARK_PURPLE = discord.Color.from_rgb(39, 18, 76)
 LIGHT_PURPLE = discord.Color.from_rgb(183, 151, 255)
 WHITE = discord.Color.from_rgb(245, 242, 255)
+PURPLE_LINES = (
+    "midnight purple",
+    "violet glow",
+    "royal pulse",
+    "neon lavender",
+    "shadow violet",
+)
 
 
 def embed(title: str, description: str | None = None, color: discord.Color = DEFAULT_COLOR) -> discord.Embed:
     e = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
-    e.set_footer(text="AinBot • dark purple system")
+    e.set_footer(text=f"AinBot | {random.choice(PURPLE_LINES)}")
     return e
+
+
+def parse_color(value: str) -> discord.Color:
+    cleaned = value.strip().lower().replace("#", "").replace("0x", "")
+    named = {
+        "purple": DEFAULT_COLOR,
+        "darkpurple": DARK_PURPLE,
+        "dark_purple": DARK_PURPLE,
+        "lightpurple": LIGHT_PURPLE,
+        "light_purple": LIGHT_PURPLE,
+        "white": WHITE,
+    }
+    if value.strip().lower() in named:
+        return named[value.strip().lower()]
+    if not re.fullmatch(r"[0-9a-f]{6}", cleaned):
+        raise ValueError("Use a hex color like #7648ff, or purple, darkpurple, lightpurple, white.")
+    return discord.Color(int(cleaned, 16))
+
+
+def pulse_line() -> str:
+    return random.choice(
+        (
+            "`midnight` violet lighting online",
+            "`glow` interface refreshed",
+            "`pulse` purple detail active",
+            "`shine` clean panel mode",
+            "`aura` server style upgraded",
+        )
+    )
 
 
 def parse_duration(value: str) -> dt.timedelta:
