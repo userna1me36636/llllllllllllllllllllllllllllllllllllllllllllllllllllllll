@@ -1,1 +1,2 @@
-python -m bot
+#!/bin/sh
+exec python bot/bot.py

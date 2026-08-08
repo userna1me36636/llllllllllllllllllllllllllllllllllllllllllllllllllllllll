@@ -1,90 +1,14 @@
-# All-in-One Discord Bot
+# Railway bot upload
 
-A production-oriented Discord bot for Python 3.12+ and discord.py 2.x. It includes slash commands, prefix commands, per-server prefixes, moderation, automod, anti-nuke protection, god mode, tickets, reaction/self roles, welcome messages, leveling, giveaways, economy, music controls, utility tools, logging, backups, and interactive help/config flows.
+Upload this folder's contents to your GitHub repository exactly as-is, then deploy that repository in Railway.
 
-The project pins `discord.py[voice]==2.7.1`, the current 2.x release on PyPI as of August 3, 2026.
+Set these Railway variables:
 
-## Quick Start
+- `DISCORD_TOKEN`
+- `OWNER_IDS`
+- `DASHBOARD_ACCESS_KEY`
+- `PREMIUM_WEBHOOK_SECRET`
 
-1. Install Python 3.12 or newer.
-2. Copy `.env.example` to `.env`.
-3. Put your Discord bot token in `.env`.
-4. Install dependencies:
+Railway supplies `PORT` automatically. Once deployed, open `https://YOUR-RAILWAY-DOMAIN/?key=YOUR_DASHBOARD_ACCESS_KEY` for the dashboard.
 
-```powershell
-py -3.12 -m pip install -r requirements.txt
-```
-
-5. Run the bot:
-
-```powershell
-py -3.12 -m bot
-```
-
-Windows helper:
-
-```powershell
-.\scripts\run.ps1
-```
-
-Linux/macOS helper:
-
-```bash
-bash scripts/run.sh
-```
-
-## Discord Developer Portal Setup
-
-Enable these privileged gateway intents for the bot application:
-
-- Server Members Intent
-- Message Content Intent
-
-Invite the bot with `bot` and `applications.commands` scopes. Give it the permissions needed for the modules you use.
-
-## Storage
-
-SQLite is used by default at `data/bot.sqlite3`. Set `DATABASE_URL=postgres://user:pass@host:5432/dbname` for PostgreSQL. SQLite is the most convenient default; PostgreSQL is recommended for very large communities.
-
-## Music Notes
-
-Music commands use `yt-dlp` and Discord voice support. Some platforms limit bot playback or require API access. Spotify URLs are resolved as metadata/search terms when credentials are present; playback still uses legally available audio sources.
-
-If YouTube or YouTube Music says sign-in/cookies are required, add either `YTDLP_COOKIES_FILE` or `YTDLP_COOKIES_TEXT` in Railway Variables. `YTDLP_COOKIES_TEXT` should contain a Netscape-format cookies.txt export. Treat it like a password.
-
-The bot includes `imageio-ffmpeg` so music can still play if Railway does not expose the system `ffmpeg` command. Advanced users can override it with `FFMPEG_PATH`.
-
-Railway also needs Opus for Discord voice. The included `nixpacks.toml` installs it, and advanced users can override the library path with `OPUS_PATH`.
-
-For extra music/helper bots, create and invite extra Discord bot applications, then put their tokens in `MUSIC_HELPER_TOKENS` separated by commas. The main bot can control up to 10 helper bots with `/music helpers_join`, `/music helpers_leave`, and `/music helpers`.
-
-## Main Commands
-
-- `/help` or `!help`: interactive help
-- `/config panel`: server configuration UI
-- `/prefix set`: change prefix
-- `/mod ban`, `/mod kick`, `/mod timeout`, `/mod warn`, `/mod purge`
-- `/automod configure`: anti-spam/link/invite/caps/profanity settings
-- `/antinuke configure`: protection thresholds and punishments
-- `/godmode add`: protect users or roles
-- `/ticket panel`: create ticket panels
-- `/roles panel`: self-role panel
-- `/welcome configure`: welcome/goodbye/autorole settings
-- `/level rank`: XP rank card
-- `/giveaway start`: timed giveaways
-- `/economy daily`: economy system
-- `/music add`: add audio to the queue
-- `/music play`: start the queued audio
-- `/music helpers_join`: make up to 10 helper bots join your voice channel
-- `/music helpers_leave`: disconnect helper bots
-- `/theme color`: change the bot panel color; use `glassred` for the red glass style
-- `/theme banner`: add an image/GIF banner to flashy bot panels
-- `/theme effects`: turn visual pulse effects on or off
-- `/utility ping`, `/utility userinfo`, `/utility poll`, `/utility qr`
-- `/ai toggle`: turn AI chat on/off
-- `/ai speak`: ask the AI a question; admin or OWNER_IDS server questions are private
-- `ain speak`: quick AI chat command for public/basic questions
-
-## Backups
-
-Database backups are written to `data/backups` on an interval controlled by `BACKUP_INTERVAL_MINUTES`.
+The premium webhook URL is `https://YOUR-RAILWAY-DOMAIN/webhooks/premium`.
