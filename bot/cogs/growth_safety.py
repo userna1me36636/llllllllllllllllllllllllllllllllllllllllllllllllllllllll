@@ -429,10 +429,13 @@ class GrowthSafety(commands.Cog):
             configured_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
             if "your-railway-domain" in configured_url.lower():
                 configured_url = ""
+            parsed_configured = urllib.parse.urlparse(configured_url)
+            if parsed_configured.scheme not in {"https", "http"} or not parsed_configured.netloc:
+                configured_url = ""
             public_url = configured_url or (f"https://{railway_domain}" if railway_domain else "")
             parsed = urllib.parse.urlparse(public_url)
             if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-                await interaction.followup.send("PUBLIC_BASE_URL is invalid. Its value must be only the full Railway URL starting with https://.", ephemeral=True)
+                await interaction.followup.send("No valid public Railway domain was found. Generate one under Railway Settings → Networking.", ephemeral=True)
                 return
             secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
             if not secret:
