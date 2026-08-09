@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import html
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import sqlite3
 import tempfile
+import time
+import urllib.parse
 from typing import Any
 import datetime as dt
 from pathlib import Path
@@ -62,6 +68,14 @@ def dashboard_html() -> str:
     .stat span { color:var(--muted); font-size:12px; }
     textarea { width:100%; min-height:92px; resize:vertical; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:11px 12px; outline:none; font:inherit; }
     .wide { grid-column:1 / -1; }
+    .tabs { display:flex; gap:7px; overflow-x:auto; padding:2px 0 12px; margin-bottom:4px; scrollbar-width:thin; }
+    .tab-button { white-space:nowrap; background:rgba(255,255,255,.055); color:var(--muted); }
+    .tab-button.active { color:#fff; border-color:var(--hot); background:linear-gradient(135deg,rgba(255,56,100,.38),rgba(143,92,255,.28)); }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+    .notice { border-left:3px solid var(--c); padding:10px 12px; background:rgba(32,211,255,.08); color:var(--muted); }
+    .metric { font-size:34px; font-weight:750; display:block; }
+    a.button { display:inline-block; text-decoration:none; text-align:center; border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18)); color:#fff; border-radius:8px; padding:10px 12px; }
     @media (prefers-reduced-motion: reduce) { body, body::before, .panel { animation:none; } }
     @media (max-width: 820px) { .grid { grid-template-columns:1fr; } header { display:block; } }
   </style>
@@ -188,6 +202,24 @@ def dashboard_html() -> str:
           <button onclick="loadLogs()">Refresh Logs</button>
           <div id="logsBox"></div>
         </div>
+        <div class="card" id="memberTransferCard">
+          <h2>Member Transfer</h2>
+          <p class="notice">Only people who explicitly authorize AIN can be added. This tool never scrapes user tokens or forces anyone into a server.</p>
+          <div class="row">
+            <div><label>Source server</label><select id="transferSource" onchange="loadTransferStatus()"></select></div>
+            <div><label>Destination server</label><select id="transferDestination" onchange="loadTransferStatus()"></select></div>
+          </div>
+          <div class="stats">
+            <div class="stat"><b id="authorizedCount">0</b><span>authorized users</span></div>
+            <div class="stat"><b id="eligibleCount">0</b><span>eligible to add</span></div>
+          </div>
+          <label>Authorization link for members</label>
+          <div class="row"><a class="button" href="/oauth/discord/start" target="_blank" rel="noopener">Authorize with Discord</a><button onclick="copyAuthorizationLink()">Copy Authorization Link</button></div>
+          <label>Admin actions</label>
+          <div class="row"><button onclick="addAuthorizedMembers()">Add Authorized Members</button><button onclick="createInvite()">Create Invite</button><button id="copyInviteButton" onclick="copyInvite()" disabled>Copy Invite</button></div>
+          <input id="inviteUrl" readonly placeholder="Invite link appears here">
+          <div id="transferResult"></div>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -209,8 +241,13 @@ async function loadGuilds(){
   try {
     const data = await api('/api/guilds');
     $('guilds').innerHTML = data.guilds.map(g=>`<option value="${g.id}">${g.name} (${g.id})</option>`).join('');
+    const transferOptions = data.guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    $('transferSource').innerHTML = transferOptions;
+    $('transferDestination').innerHTML = transferOptions;
+    if(data.guilds.length > 1) $('transferDestination').selectedIndex = 1;
     setStatus('Servers loaded.');
     await loadSummary();
+    await loadTransferStatus();
   } catch(e){ setStatus(e.message); }
 }
 async function loadSummary(){
@@ -256,6 +293,72 @@ async function createRole(){ await api('/api/guild/' + guild() + '/role/create',
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
 async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
+async function loadTransferStatus(){
+  if(!$('transferSource').value || !$('transferDestination').value) return;
+  try {
+    const data = await api('/api/member-transfer/status?source_id=' + $('transferSource').value + '&destination_id=' + $('transferDestination').value);
+    $('authorizedCount').textContent = data.authorized;
+    $('eligibleCount').textContent = data.eligible;
+    $('transferResult').innerHTML = data.oauth_configured ? `<p>${data.already_in_destination} authorized user(s) are already in the destination.</p>` : '<p class="notice">OAuth needs the four Discord OAuth environment settings before members can authorize.</p>';
+  } catch(e){ $('transferResult').innerHTML = `<p>${e.message}</p>`; }
+}
+async function addAuthorizedMembers(){
+  if(!confirm('Add only the eligible users who explicitly authorized AIN?')) return;
+  try {
+    const data = await api('/api/member-transfer/add', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({source_id:$('transferSource').value, destination_id:$('transferDestination').value})});
+    $('transferResult').innerHTML = `<p><b>${data.added}</b> added · ${data.failed} failed · ${data.reauthorization_required} need to reauthorize.</p>`;
+    setStatus('Authorized member transfer finished.'); await loadTransferStatus();
+  } catch(e){ setStatus(e.message); }
+}
+async function createInvite(){
+  try {
+    const data = await api('/api/member-transfer/invite', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({destination_id:$('transferDestination').value})});
+    $('inviteUrl').value = data.url; $('copyInviteButton').disabled = false; setStatus('24-hour invite created.');
+  } catch(e){ setStatus(e.message); }
+}
+async function copyInvite(){ await navigator.clipboard.writeText($('inviteUrl').value); setStatus('Invite copied.'); }
+async function copyAuthorizationLink(){ await navigator.clipboard.writeText(location.origin + '/oauth/discord/start'); setStatus('Authorization link copied.'); }
+
+function setupTabs(){
+  const main = document.querySelector('main.panel');
+  const definitions = [
+    ['overview','Overview'], ['server','Server Control'], ['ai','AI & Commands'], ['voice','Voice & Chat'],
+    ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
+  ];
+  const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
+  const panels = {};
+  definitions.forEach(([id,label], index)=>{
+    const button = document.createElement('button'); button.className='tab-button' + (index===0?' active':''); button.textContent=label; button.type='button'; button.onclick=()=>showTab(id); nav.appendChild(button);
+    const panel = document.createElement('section'); panel.className='tab-panel' + (index===0?' active':''); panel.dataset.tab=id; panels[id]=panel;
+  });
+  const children = [...main.children]; main.prepend(nav); definitions.forEach(([id])=>main.appendChild(panels[id]));
+  children.forEach(node=>{
+    const title=(node.querySelector?.('h2')?.textContent || node.id || '').toLowerCase();
+    let tab='overview';
+    if(title.includes('ask') || title.includes('assistant') || node.id==='results') tab='ai';
+    if(title.includes('server control')) tab='server';
+    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement')) tab='voice';
+    if(title.includes('music')) tab='music';
+    if(title.includes('security')) tab='security';
+    if(title.includes('economy')) tab='economy';
+    if(title.includes('member transfer')) tab='members';
+    if(title.includes('live logs')) tab='logs';
+    panels[tab].appendChild(node);
+  });
+  document.querySelectorAll('.grid > section.panel > .card').forEach(node=>{
+    const title=(node.querySelector('h2')?.textContent || '').toLowerCase();
+    let tab='overview';
+    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement')) tab='voice';
+    panels[tab].appendChild(node);
+  });
+}
+function showTab(id){
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.dataset.tab===id));
+  document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.textContent===({overview:'Overview',server:'Server Control',ai:'AI & Commands',voice:'Voice & Chat',music:'Music',security:'Security',economy:'Economy & Roles',members:'Members',logs:'Logs'})[id]));
+  history.replaceState(null,'','#'+id);
+}
+setupTabs();
+if(location.hash) showTab(location.hash.slice(1));
 </script>
 </body>
 </html>"""
@@ -264,6 +367,73 @@ async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/lo
 class Dashboard:
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self.oauth_db = Path(__file__).resolve().parents[2] / "data" / "oauth_authorizations.sqlite3"
+        self._init_oauth_db()
+
+    def _init_oauth_db(self) -> None:
+        self.oauth_db.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.oauth_db) as db:
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS oauth_authorizations (
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    expires_at INTEGER NOT NULL,
+                    scope TEXT NOT NULL,
+                    authorized_at INTEGER NOT NULL
+                )"""
+            )
+
+    def _oauth_configured(self) -> bool:
+        settings = self.bot.settings
+        return bool(settings.discord_client_id and settings.discord_client_secret and settings.discord_oauth_redirect_uri and settings.oauth_state_secret)
+
+    def _oauth_state(self) -> str:
+        issued = str(int(time.time()))
+        nonce = secrets.token_urlsafe(16)
+        payload = f"{issued}.{nonce}"
+        signature = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return f"{payload}.{signature}"
+
+    def _valid_oauth_state(self, state: str) -> bool:
+        try:
+            issued, nonce, signature = state.split(".", 2)
+            payload = f"{issued}.{nonce}"
+            expected = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(signature, expected) and abs(int(time.time()) - int(issued)) <= 900
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    def _authorizations(self) -> list[dict[str, Any]]:
+        with sqlite3.connect(self.oauth_db) as db:
+            db.row_factory = sqlite3.Row
+            return [dict(row) for row in db.execute("SELECT * FROM oauth_authorizations ORDER BY authorized_at DESC")]
+
+    async def _fresh_access_token(self, authorization: dict[str, Any]) -> str | None:
+        if int(authorization["expires_at"]) > int(time.time()) + 60:
+            return str(authorization["access_token"])
+        refresh_token = authorization.get("refresh_token")
+        if not refresh_token:
+            return None
+        form = {
+            "client_id": self.bot.settings.discord_client_id,
+            "client_secret": self.bot.settings.discord_client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
+        async with ClientSession() as session:
+            async with session.post("https://discord.com/api/v10/oauth2/token", data=form) as response:
+                if response.status != 200:
+                    return None
+                tokens = await response.json()
+        expires_at = int(time.time()) + int(tokens.get("expires_in", 0))
+        with sqlite3.connect(self.oauth_db) as db:
+            db.execute(
+                "UPDATE oauth_authorizations SET access_token=?, refresh_token=?, expires_at=?, scope=? WHERE user_id=?",
+                (tokens["access_token"], tokens.get("refresh_token") or refresh_token, expires_at, tokens.get("scope", "identify guilds.join"), authorization["user_id"]),
+            )
+        return str(tokens["access_token"])
 
     def require_token(self, request: web.Request) -> None:
         expected = getattr(self.bot.settings, "dashboard_token", None)
@@ -320,6 +490,108 @@ class Dashboard:
 
     async def index(self, _: web.Request) -> web.Response:
         return web.Response(text=dashboard_html(), content_type="text/html")
+
+    async def oauth_start(self, _: web.Request) -> web.Response:
+        if not self._oauth_configured():
+            raise web.HTTPServiceUnavailable(text="Discord OAuth is not configured yet.")
+        query = urllib.parse.urlencode({
+            "client_id": self.bot.settings.discord_client_id,
+            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
+            "response_type": "code",
+            "scope": "identify guilds.join",
+            "state": self._oauth_state(),
+            "prompt": "consent",
+        })
+        raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
+
+    async def oauth_callback(self, request: web.Request) -> web.Response:
+        if not self._oauth_configured() or not self._valid_oauth_state(request.query.get("state", "")):
+            raise web.HTTPBadRequest(text="Invalid or expired authorization request.")
+        code = request.query.get("code")
+        if not code:
+            raise web.HTTPBadRequest(text="Discord authorization was cancelled or no code was returned.")
+        form = {
+            "client_id": self.bot.settings.discord_client_id,
+            "client_secret": self.bot.settings.discord_client_secret,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
+        }
+        async with ClientSession() as session:
+            async with session.post("https://discord.com/api/v10/oauth2/token", data=form) as response:
+                tokens = await response.json()
+                if response.status != 200:
+                    raise web.HTTPBadRequest(text="Discord could not complete authorization.")
+            headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+            async with session.get("https://discord.com/api/v10/users/@me", headers=headers) as response:
+                user = await response.json()
+                if response.status != 200:
+                    raise web.HTTPBadRequest(text="Discord could not identify the authorized user.")
+        expires_at = int(time.time()) + int(tokens.get("expires_in", 0))
+        username = user.get("global_name") or user.get("username") or user["id"]
+        with sqlite3.connect(self.oauth_db) as db:
+            db.execute(
+                """INSERT INTO oauth_authorizations
+                   (user_id, username, access_token, refresh_token, expires_at, scope, authorized_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
+                   access_token=excluded.access_token, refresh_token=excluded.refresh_token,
+                   expires_at=excluded.expires_at, scope=excluded.scope, authorized_at=excluded.authorized_at""",
+                (str(user["id"]), str(username), tokens["access_token"], tokens.get("refresh_token"), expires_at, tokens.get("scope", "identify guilds.join"), int(time.time())),
+            )
+        return web.Response(
+            text="<!doctype html><meta charset='utf-8'><title>AIN authorized</title><body style='font-family:system-ui;background:#09070d;color:#fff;padding:3rem'><h1>Authorization complete</h1><p>You explicitly authorized AIN to add your Discord account to a server when an AIN administrator starts a transfer. You can close this window.</p></body>",
+            content_type="text/html",
+        )
+
+    async def transfer_status(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        source = self.guild_or_404(request.query.get("source_id", "0"))
+        destination = self.guild_or_404(request.query.get("destination_id", "0"))
+        authorized = self._authorizations()
+        eligible = [row for row in authorized if source.get_member(int(row["user_id"])) and not destination.get_member(int(row["user_id"]))]
+        return web.json_response({
+            "authorized": len(authorized),
+            "eligible": len(eligible),
+            "already_in_destination": sum(1 for row in authorized if destination.get_member(int(row["user_id"]))),
+            "oauth_configured": self._oauth_configured(),
+        })
+
+    async def transfer_members(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        body = await request.json()
+        source = self.guild_or_404(str(body.get("source_id", "0")))
+        destination = self.guild_or_404(str(body.get("destination_id", "0")))
+        if source.id == destination.id:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose two different servers."}), content_type="application/json")
+        if destination.me is None or not destination.me.guild_permissions.manage_guild:
+            raise web.HTTPForbidden(text=json.dumps({"error": "The bot needs Manage Server in the destination server."}), content_type="application/json")
+        eligible = [row for row in self._authorizations() if source.get_member(int(row["user_id"])) and not destination.get_member(int(row["user_id"]))]
+        added = failed = expired = 0
+        async with ClientSession() as session:
+            for authorization in eligible:
+                access_token = await self._fresh_access_token(authorization)
+                if not access_token:
+                    expired += 1
+                    continue
+                url = f"https://discord.com/api/v10/guilds/{destination.id}/members/{authorization['user_id']}"
+                headers = {"Authorization": f"Bot {self.bot.settings.discord_token}", "Content-Type": "application/json"}
+                async with session.put(url, headers=headers, json={"access_token": access_token}) as response:
+                    if response.status in {201, 204}:
+                        added += 1
+                    else:
+                        failed += 1
+        return web.json_response({"eligible": len(eligible), "added": added, "failed": failed, "reauthorization_required": expired})
+
+    async def create_transfer_invite(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        body = await request.json()
+        destination = self.guild_or_404(str(body.get("destination_id", "0")))
+        channel = next((c for c in destination.text_channels if c.permissions_for(destination.me).create_instant_invite), None) if destination.me else None
+        if channel is None:
+            raise web.HTTPForbidden(text=json.dumps({"error": "The bot needs Create Invite in a destination text channel."}), content_type="application/json")
+        invite = await channel.create_invite(max_age=86400, max_uses=0, unique=True, reason="AIN dashboard member transfer fallback")
+        return web.json_response({"url": invite.url, "expires_in": 86400})
 
     async def guilds(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -870,7 +1142,12 @@ async def start_dashboard(bot: commands.Bot) -> None:
     dashboard = Dashboard(bot)
     app = web.Application()
     app.router.add_get("/", dashboard.index)
+    app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
+    app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
     app.router.add_get("/api/guilds", dashboard.guilds)
+    app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
+    app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
+    app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)
     app.router.add_get("/api/guild/{guild_id}/summary", dashboard.summary)
     app.router.add_get("/api/guild/{guild_id}/commands", dashboard.commands)
     app.router.add_get("/api/guild/{guild_id}/search", dashboard.search)
