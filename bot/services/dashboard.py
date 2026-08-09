@@ -267,16 +267,20 @@ def dashboard_html() -> str:
         </div>
         <div class="card" id="setupGuideCard">
           <h2>Bot Setup Guide</h2>
-          <p>Complete these steps in order for commands, moderation, member transfer, voice, and the dashboard to work correctly.</p>
+          <p>Run these commands inside each Discord server after inviting the bot. The first section is the recommended minimum; the rest enables optional server features.</p>
           <ol class="guide-list">
-            <li><b>Discord application:</b> create the bot in the Developer Portal and enable Server Members Intent and Message Content Intent.</li>
-            <li><b>Invite scopes:</b> invite it with <code>bot</code> and <code>applications.commands</code>. Place the bot role above every role it needs to manage.</li>
-            <li><b>Core permissions:</b> enable Manage Channels, Manage Roles, Manage Messages, Moderate Members, Kick, Ban, View Audit Log, Manage Webhooks, Connect, Speak, and Create Invite as needed.</li>
-            <li><b>Required environment:</b> set <code>DISCORD_TOKEN</code>, <code>DASHBOARD_TOKEN</code>, <code>OWNER_IDS</code>, and <code>AUTO_SYNC_COMMANDS=true</code>.</li>
-            <li><b>Member Transfer:</b> add the exact OAuth callback in Discord, then set <code>DISCORD_CLIENT_ID</code>, <code>DISCORD_CLIENT_SECRET</code>, <code>DISCORD_OAUTH_REDIRECT_URI</code>, and <code>OAUTH_STATE_SECRET</code>.</li>
-            <li><b>Initial server setup:</b> run <code>/config panel</code>, choose log channels, configure AutoMod and Anti-Nuke, add trusted owners, and create a backup.</li>
-            <li><b>Optional features:</b> add OpenAI, Spotify, weather, translation, YouTube cookie, FFmpeg, and Opus settings only for the features you plan to use.</li>
-            <li><b>Final test:</b> run <code>/doctor</code>, confirm slash commands synced, test a private lock/unlock channel, verify logs, then test music and voice.</li>
+            <li><b>Main setup — <code>/setup wizard</code>:</b> select the logs channel, welcome channel, ticket category, backup/update channel, and server prefix. This saves the main server locations in one command.</li>
+            <li><b>Check permissions — <code>/doctor</code>:</b> shows missing permissions, intents, variables, voice requirements, and configuration problems. Fix every red item before continuing.</li>
+            <li><b>Server logs — <code>/logs set</code>:</b> choose the private staff channel that should receive server events. Use <code>/usagelogs set</code> if you also want command-usage records.</li>
+            <li><b>Anti-Nuke — <code>/antinuke panel</code>:</b> review the clickable protection panel, then run <code>/antinuke enable</code>. Add trusted people or roles with <code>/antinuke whitelist</code> and confirm with <code>/antinuke status</code>.</li>
+            <li><b>AutoMod — <code>/automod links</code> and <code>/automod invites</code>:</b> turn on link and invite filtering. Use <code>/automod words</code> for banned words and <code>/automod configure</code> for other rules and punishments.</li>
+            <li><b>Welcome system — <code>/welcome configure</code>:</b> set the welcome channel, message, optional goodbye channel, and autorole together. Use <code>/welcome set</code> or <code>/welcome leave</code> when changing only one message.</li>
+            <li><b>Tickets — <code>/ticket panel</code>:</b> run this in the channel where members should open support tickets. The category chosen in <code>/setup wizard</code> controls where tickets are created.</li>
+            <li><b>Self roles — <code>/roles panel</code>:</b> create the member role-selection panel. Make sure the bot role is above every role it needs to give.</li>
+            <li><b>Levels — <code>/levels toggle</code>:</b> enable XP and ranks if wanted. Add automatic rewards with <code>/levelrewards add</code> and check them with <code>/levelrewards list</code>.</li>
+            <li><b>Join-to-create voice — <code>/setup jtc</code>:</b> select the lobby voice channel, output category, room name, and user limit. Check it afterward with <code>/jtc config</code>.</li>
+            <li><b>Optional community tools:</b> use <code>/suggest setup</code>, <code>/bug setup</code>, <code>/modmail setup</code>, <code>/starboard setup</code>, <code>/quarantine setup</code>, <code>/stats setup</code>, and <code>/boost setup</code> only for features your server needs.</li>
+            <li><b>Backup and final check — <code>/backup make_code</code>:</b> save the backup code privately, then run <code>/checklist</code>, <code>/dashboard overview</code>, and <code>/doctor</code> to confirm the server is ready.</li>
           </ol>
         </div>
         <div id="results" class="card"></div>

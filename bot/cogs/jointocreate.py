@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin
-from bot.core.utils import DEFAULT_COLOR, embed, pulse_line, style_embed, theme_color_from_data
+from bot.core.utils import DEFAULT_COLOR, embed, theme_color_from_data
 
 
 class JtcRenameModal(discord.ui.Modal):
@@ -50,21 +50,6 @@ class JtcControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.channel_id = channel_id
-        glass_labels = {
-            "Claim": "Glass Claim",
-            "Boost Bitrate": "Glass Bitrate",
-            "Boost Privacy": "Glass Privacy",
-            "Play Music": "Glass Music",
-            "Purple Pulse": "Glass Pulse",
-        }
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                if item.label in glass_labels:
-                    item.label = glass_labels[item.label]
-                if item.style in {discord.ButtonStyle.primary, discord.ButtonStyle.success}:
-                    item.style = discord.ButtonStyle.secondary
-                if item.label in {"Glass Claim", "Unlock", "Glass Bitrate", "Glass Privacy", "Glass Music", "Glass Pulse"}:
-                    item.emoji = None
 
     async def channel(self, interaction: discord.Interaction) -> discord.VoiceChannel | None:
         if interaction.guild is None:
@@ -165,14 +150,6 @@ class JtcControlView(discord.ui.View):
             return
         await self.cog.start_music_panel(interaction, channel)
 
-    @discord.ui.button(label="Purple Pulse", style=discord.ButtonStyle.primary)
-    async def purple_pulse(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        channel = await self.channel(interaction)
-        if channel is None:
-            return
-        await interaction.response.send_message(embed=self.cog.pulse_embed(channel.guild), ephemeral=True)
-
-
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -239,22 +216,11 @@ class JoinToCreate(commands.Cog):
         return discord.Color(int(cached)) if cached else DEFAULT_COLOR
 
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
-        theme = self.theme_options.get(channel.guild.id, {})
-        e = embed("Voice Glass Panel", f"{pulse_line()}\n\nOwner: {owner.mention}\nUse the frosted controls below to control {channel.mention}.", self.theme_color(channel.guild))
-        e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
-        e.add_field(name="Booster Perks", value="Boost Bitrate and Boost Privacy are booster-only VC tools. Mods can use them too.", inline=False)
-        e.add_field(name="Music", value="Press Play Music to bring the bot into this VC and open the music panel.", inline=False)
-        e.add_field(name="Style", value="Glass Pulse refreshes the red glass frame for this VC.", inline=False)
-        if theme.get("effects", True):
-            e.add_field(name="Live Detail", value="Barely translucent red background feel, white outline wording, and a glass-frame banner slot from `/theme banner`.", inline=False)
-        e.set_footer(text="AinBot JTC | red glass interface")
-        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
-
-    def pulse_embed(self, guild: discord.Guild | None) -> discord.Embed:
-        theme = self.theme_options.get(guild.id, {}) if guild else {}
-        e = embed("Glass Pulse", pulse_line(), self.theme_color(guild))
-        e.add_field(name="VC Interface", value="This temp VC panel is using the red glass server theme.", inline=False)
-        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
+        e = embed("Voice Channel Controls", f"Owner: {owner.mention}\nChannel: {channel.mention}", self.theme_color(channel.guild))
+        e.add_field(name="Channel", value="Claim · Rename · Limit · Lock · Unlock · Hide · Reveal", inline=False)
+        e.add_field(name="Extras", value="Boost Bitrate · Boost Privacy · Play Music", inline=False)
+        e.set_footer(text="Only the VC owner or server moderators can use these controls.")
+        return e
 
     async def start_music_panel(self, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
         if not isinstance(interaction.user, discord.Member):
