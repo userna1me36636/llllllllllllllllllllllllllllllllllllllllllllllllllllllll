@@ -119,7 +119,10 @@ class CommandMenu(commands.Cog):
             ("All Access", str(data["all_price"]), str(data.get("all_url", ""))),
         ]
         railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/") or (f"https://{railway_domain}" if railway_domain else "")
+        configured_public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if "your-railway-domain" in configured_public_url.lower():
+            configured_public_url = ""
+        public_url = configured_public_url or (f"https://{railway_domain}" if railway_domain else "")
         signing_secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
         if public_url and signing_secret:
             payload = f"{member.guild.id}:{member.id}"
