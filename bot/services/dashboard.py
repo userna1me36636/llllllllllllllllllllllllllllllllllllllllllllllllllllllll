@@ -49,6 +49,7 @@ def dashboard_html() -> str:
     .card { border:1px solid rgba(255,255,255,.16); background:linear-gradient(145deg,rgba(0,0,0,.38),rgba(255,255,255,.06)); border-radius:8px; padding:12px; margin-top:10px; box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
     label { display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }
     input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:#171017; color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
+    .select-search { margin:0 0 6px; background:rgba(7,7,11,.72); border-color:rgba(32,211,255,.3); }
     option { background:#171017; color:#f7f2f5; }
     option:checked, option:hover { background:#b2182c; color:#fff; }
     button { border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18),rgba(32,211,255,.13)); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; box-shadow:inset 0 1px 0 rgba(255,255,255,.14); }
@@ -357,7 +358,36 @@ function showTab(id){
   document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.textContent===({overview:'Overview',server:'Server Control',ai:'AI & Commands',voice:'Voice & Chat',music:'Music',security:'Security',economy:'Economy & Roles',members:'Members',logs:'Logs'})[id]));
   history.replaceState(null,'','#'+id);
 }
+function makeDropdownsSearchable(){
+  document.querySelectorAll('select').forEach(select=>{
+    if(select.dataset.searchable) return;
+    select.dataset.searchable='true';
+    const search=document.createElement('input');
+    search.type='search';
+    search.className='select-search';
+    const label=select.closest('div')?.querySelector('label')?.textContent || select.previousElementSibling?.textContent || 'options';
+    search.placeholder='Type to find ' + label.toLowerCase() + '…';
+    search.setAttribute('aria-label','Search ' + label);
+    const filter=()=>{
+      const query=search.value.trim().toLowerCase();
+      let firstVisible=null;
+      [...select.options].forEach(option=>{
+        const visible=!query || (option.textContent + ' ' + option.value).toLowerCase().includes(query);
+        option.hidden=!visible;
+        if(visible && !firstVisible) firstVisible=option;
+      });
+      if(firstVisible && select.selectedOptions[0]?.hidden){
+        select.value=firstVisible.value;
+        select.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+    };
+    search.addEventListener('input',filter);
+    new MutationObserver(filter).observe(select,{childList:true});
+    select.before(search);
+  });
+}
 setupTabs();
+makeDropdownsSearchable();
 if(location.hash) showTab(location.hash.slice(1));
 </script>
 </body>
