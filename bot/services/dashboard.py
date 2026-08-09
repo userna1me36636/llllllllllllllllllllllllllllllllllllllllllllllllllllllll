@@ -304,7 +304,8 @@ def dashboard_html() -> str:
         </div>
         <div class="card">
           <h2>Promo Codes</h2><p>Create percentage discounts and track active codes and confirmed uses.</p>
-          <div class="row"><input id="promoCode" maxlength="32" placeholder="CODE"><input id="promoPercent" type="number" min="1" max="100" placeholder="% off"><input id="promoMax" type="number" min="0" placeholder="Max uses (0 unlimited)"></div>
+          <div class="row"><input id="promoCode" maxlength="32" placeholder="CODE"><input id="promoPercent" type="number" min="1" max="100" placeholder="% off"><input id="promoMax" type="number" min="0" value="0" placeholder="Max uses (0 unlimited)"></div>
+          <label>Works for</label><select id="promoProduct"><option value="all">All packages</option><option value="vc_perms">VC Perms</option><option value="anti_reject">Anti-Reject</option><option value="godmode">Godmode</option><option value="all_access">All Access only</option></select>
           <button onclick="savePromo()">Create or Update Code</button><button onclick="loadPromos()">Refresh Codes</button><div id="promoList"></div>
         </div>
         <div class="card">
@@ -422,9 +423,9 @@ async function loadPaymentLogs(){
     $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
   } catch(e){ setStatus(e.message); }
 }
-async function loadPromos(){ const data=await api('/api/guild/'+guild()+'/promos'); $('promoList').innerHTML=data.codes.map(c=>`<div class="cmd"><b>${safe(c.code)} · ${c.percent_off}% off</b><span>${c.active?'Active':'Inactive'} · ${c.uses}/${c.max_uses||'unlimited'} uses · Used by: ${safe(c.used_by||'Nobody yet')}</span><button onclick="togglePromo('${safe(c.code)}',${c.percent_off},${c.max_uses},${!c.active})">${c.active?'Disable':'Enable'}</button></div>`).join('')||'<p>No promo codes yet.</p>'; }
-async function savePromo(){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('promoCode').value,percent_off:$('promoPercent').value,max_uses:$('promoMax').value,active:true})}); setStatus('Promo code saved.'); loadPromos(); }
-async function togglePromo(code,percent_off,max_uses,active){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code,percent_off,max_uses,active})}); loadPromos(); }
+async function loadPromos(){ const data=await api('/api/guild/'+guild()+'/promos'); $('promoList').innerHTML=data.codes.map(c=>`<div class="cmd"><b>${safe(c.code)} · ${c.percent_off}% off</b><span>${c.active?'Active':'Inactive'} · For: ${safe(c.product==='all'?'All packages':c.product.replaceAll('_',' '))} · ${c.uses}/${c.max_uses||'unlimited'} uses · Used by: ${safe(c.used_by||'Nobody yet')}</span><button onclick="togglePromo('${safe(c.code)}',${c.percent_off},${c.max_uses},'${safe(c.product)}',${!c.active})">${c.active?'Disable':'Enable'}</button></div>`).join('')||'<p>No promo codes yet.</p>'; }
+async function savePromo(){ try{ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('promoCode').value,percent_off:$('promoPercent').value,max_uses:$('promoMax').value||0,product:$('promoProduct').value,active:true})}); setStatus('Promo code saved.'); loadPromos(); }catch(e){setStatus(e.message);} }
+async function togglePromo(code,percent_off,max_uses,product,active){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code,percent_off,max_uses,product,active})}); loadPromos(); }
 async function loadGiveawayConfig(){ const data=await api('/api/guild/'+guild()+'/giveaway-config'); $('giveawayOutcomes').value=data.outcomes.map(x=>x.name+'|'+x.weight).join('\\n'); }
 async function saveGiveawayConfig(){ const outcomes=$('giveawayOutcomes').value.split('\\n').map(line=>{const p=line.split('|');return {name:p[0].trim(),weight:Number(p[1]||1)}}).filter(x=>x.name&&x.weight>0); await api('/api/guild/'+guild()+'/giveaway-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({outcomes})}); setStatus('Giveaway picks saved.'); }
 async function setupLiveChannels(){ await api('/api/guild/'+guild()+'/live-channels',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'setup'})}); setStatus('Live channels created and refreshed.'); }
@@ -627,8 +628,10 @@ class Dashboard:
             db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
                 guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
-                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, product TEXT NOT NULL DEFAULT 'all',
                 PRIMARY KEY(guild_id,code))""")
+            if "product" not in {row[1] for row in db.execute("PRAGMA table_info(promo_codes)")}:
+                db.execute("ALTER TABLE promo_codes ADD COLUMN product TEXT NOT NULL DEFAULT 'all'")
             db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
                 session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
                 user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
@@ -951,12 +954,19 @@ class Dashboard:
             ("godmode", "Godmode", offer.get("godmode_price", "30"), "Full VC protection"),
             ("all", "All Access", offer.get("all_price", "45"), "Complete access bundle"),
         ]
+        promo_status = ""
+        if promo:
+            with sqlite3.connect(self.oauth_db) as db:
+                promo_row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
+            applies = bool(promo_row) and (promo_row[4] == "all" or not selected or promo_row[4] == selected or (promo_row[4] == "all_access" and selected == "all"))
+            available = bool(promo_row) and bool(promo_row[1]) and (promo_row[2] == 0 or promo_row[3] < promo_row[2])
+            promo_status = f'<p class="promo-result good">Code claimed — {int(promo_row[0])}% off.</p>' if applies and available else '<p class="promo-result bad">Code invalid.</p>'
         cards = "".join(
             f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price">${html.escape(str(price))}</div><p>{html.escape(detail)}</p><a href="/checkout/start?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key,'promo':promo})}">Choose {html.escape(name)}</a></article>'''
             for key, name, price, detail in products
         )
         page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice Access</title><style>
-        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button></form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
+        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.promo-result{{font-weight:700;margin:12px 0 0}}.good{{color:#b9df8b}}.bad{{color:#ff9c80}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button>{promo_status}</form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
         return web.Response(text=page, content_type="text/html")
 
     async def checkout_start(self, request: web.Request) -> web.Response:
@@ -976,8 +986,9 @@ class Dashboard:
         percent_off = 0
         if promo:
             with sqlite3.connect(self.oauth_db) as db:
-                row = db.execute("SELECT percent_off,active,max_uses,uses FROM promo_codes WHERE guild_id=? AND code=?", (guild_id, promo)).fetchone()
-            if row and row[1] and (row[2] == 0 or row[3] < row[2]):
+                row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
+            applies = row and (row[4] == "all" or row[4] == product or (row[4] == "all_access" and product == "all"))
+            if applies and row[1] and (row[2] == 0 or row[3] < row[2]):
                 percent_off = int(row[0])
             else:
                 raise web.HTTPBadRequest(text="That promo code is invalid, inactive, or fully used.")
@@ -1053,10 +1064,13 @@ class Dashboard:
             code = "".join(ch for ch in str(body.get("code", "")).upper() if ch.isalnum() or ch in "-_")[:32]
             percent = int(body.get("percent_off", 0) or 0)
             max_uses = int(body.get("max_uses", 0) or 0)
+            product = str(body.get("product", "all"))
+            if product not in {"all", "vc_perms", "anti_reject", "godmode", "all_access"}:
+                product = "all"
             if not code or not 1 <= percent <= 100 or max_uses < 0:
                 raise web.HTTPBadRequest(text=json.dumps({"error": "Enter a code, 1-100 percent off, and a valid max-use count."}), content_type="application/json")
             with sqlite3.connect(self.oauth_db) as db:
-                db.execute("INSERT INTO promo_codes(guild_id,code,percent_off,active,max_uses,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id,code) DO UPDATE SET percent_off=excluded.percent_off,active=excluded.active,max_uses=excluded.max_uses", (str(guild.id), code, percent, int(bool(body.get("active", True))), max_uses, int(time.time())))
+                db.execute("INSERT INTO promo_codes(guild_id,code,percent_off,active,max_uses,created_at,product) VALUES(?,?,?,?,?,?,?) ON CONFLICT(guild_id,code) DO UPDATE SET percent_off=excluded.percent_off,active=excluded.active,max_uses=excluded.max_uses,product=excluded.product", (str(guild.id), code, percent, int(bool(body.get("active", True))), max_uses, int(time.time()), product))
         with sqlite3.connect(self.oauth_db) as db:
             db.row_factory = sqlite3.Row
             rows = [dict(row) for row in db.execute("SELECT p.*,GROUP_CONCAT(u.user_id) AS used_by FROM promo_codes p LEFT JOIN promo_uses u ON u.guild_id=p.guild_id AND u.code=p.code WHERE p.guild_id=? GROUP BY p.code ORDER BY p.created_at DESC", (str(guild.id),))]
