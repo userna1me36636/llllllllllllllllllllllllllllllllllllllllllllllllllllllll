@@ -423,22 +423,31 @@ class GrowthSafety(commands.Cog):
 
     @store.command(name="link", description="Get your private link to this server's payment shop")
     async def store_link(self, interaction: discord.Interaction) -> None:
-        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-        configured_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-        if "your-railway-domain" in configured_url.lower():
-            configured_url = ""
-        public_url = configured_url or (f"https://{railway_domain}" if railway_domain else "")
-        secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
-        if not public_url or not secret:
-            await interaction.response.send_message("The payment website is not configured yet. Set PUBLIC_BASE_URL to the Railway public domain.", ephemeral=True)
-            return
-        payload = f"{interaction.guild_id}:{interaction.user.id}"
-        signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(interaction.guild_id), "user_id": str(interaction.user.id), "signature": signature})
-        view = discord.ui.View(timeout=300)
-        view.add_item(discord.ui.Button(label="Open Payment Store", url=url))
-        e = await self.themed(interaction.guild_id, "Payment Store", "Use the button below to view this server's available packages. This link is private to your Discord account.")
-        await interaction.response.send_message(embed=e, view=view, ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+            configured_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+            if "your-railway-domain" in configured_url.lower():
+                configured_url = ""
+            public_url = configured_url or (f"https://{railway_domain}" if railway_domain else "")
+            parsed = urllib.parse.urlparse(public_url)
+            if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+                await interaction.followup.send("PUBLIC_BASE_URL is invalid. Its value must be only the full Railway URL starting with https://.", ephemeral=True)
+                return
+            secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
+            if not secret:
+                await interaction.followup.send("Set OAUTH_STATE_SECRET or DASHBOARD_TOKEN in Railway, then redeploy.", ephemeral=True)
+                return
+            payload = f"{interaction.guild_id}:{interaction.user.id}"
+            signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(interaction.guild_id), "user_id": str(interaction.user.id), "signature": signature})
+            view = discord.ui.View(timeout=300)
+            view.add_item(discord.ui.Button(label="Open Payment Store", url=url))
+            e = await self.themed(interaction.guild_id, "Payment Store", "Use the button below to view this server's available packages. This link is private to your Discord account.")
+            await interaction.followup.send(embed=e, view=view, ephemeral=True)
+        except Exception as error:
+            self.bot.log.exception("/store link failed")
+            await interaction.followup.send(f"Store link failed: `{type(error).__name__}`. Check Railway logs for the details.", ephemeral=True)
 
     async def update_stats(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
