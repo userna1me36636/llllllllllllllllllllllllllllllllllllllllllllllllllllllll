@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
+import os
 import time
+import urllib.parse
 from collections import defaultdict, deque
 from typing import Any
 
@@ -416,6 +420,25 @@ class GrowthSafety(commands.Cog):
         await self.bot.db.set_settings_value(interaction.guild_id, "stats_channels", ids, self.bot.settings.default_prefix)
         await self.update_stats(interaction.guild)
         await interaction.followup.send(embed=await self.themed(interaction.guild_id, "Stats Channels Ready"), ephemeral=True)
+
+    @store.command(name="link", description="Get your private link to this server's payment shop")
+    async def store_link(self, interaction: discord.Interaction) -> None:
+        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        configured_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if "your-railway-domain" in configured_url.lower():
+            configured_url = ""
+        public_url = configured_url or (f"https://{railway_domain}" if railway_domain else "")
+        secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
+        if not public_url or not secret:
+            await interaction.response.send_message("The payment website is not configured yet. Set PUBLIC_BASE_URL to the Railway public domain.", ephemeral=True)
+            return
+        payload = f"{interaction.guild_id}:{interaction.user.id}"
+        signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(interaction.guild_id), "user_id": str(interaction.user.id), "signature": signature})
+        view = discord.ui.View(timeout=300)
+        view.add_item(discord.ui.Button(label="Open Payment Store", url=url))
+        e = await self.themed(interaction.guild_id, "Payment Store", "Use the button below to view this server's available packages. This link is private to your Discord account.")
+        await interaction.response.send_message(embed=e, view=view, ephemeral=True)
 
     async def update_stats(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)

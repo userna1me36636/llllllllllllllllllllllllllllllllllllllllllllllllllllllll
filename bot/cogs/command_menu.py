@@ -1171,8 +1171,8 @@ class CommandMenu(commands.Cog):
         channel = self.owned_channel(interaction.user)
         if channel:
             settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
-            if member.id in settings.get("vc_godmode", []):
-                await interaction.response.send_message(f"{member.mention} has VC God Mode and cannot be rejected.", ephemeral=True)
+            if member.id in settings.get("vc_godmode", []) or member.id in settings.get("vc_anti_reject", []):
+                await interaction.response.send_message(f"{member.mention} has protected VC access and cannot be rejected.", ephemeral=True)
                 return
             await channel.set_permissions(member, connect=False)
             if member.voice and member.voice.channel == channel:

@@ -635,6 +635,10 @@ class Dashboard:
             db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
                 session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
                 user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS free_claims (
+                guild_id TEXT NOT NULL, user_id TEXT NOT NULL, product TEXT NOT NULL,
+                code TEXT NOT NULL, claimed_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id,product))""")
 
     def _oauth_configured(self) -> bool:
         settings = self.bot.settings
@@ -955,18 +959,59 @@ class Dashboard:
             ("all", "All Access", offer.get("all_price", "45"), "Complete access bundle"),
         ]
         promo_status = ""
+        promo_row = None
         if promo:
             with sqlite3.connect(self.oauth_db) as db:
                 promo_row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
             applies = bool(promo_row) and (promo_row[4] == "all" or not selected or promo_row[4] == selected or (promo_row[4] == "all_access" and selected == "all"))
             available = bool(promo_row) and bool(promo_row[1]) and (promo_row[2] == 0 or promo_row[3] < promo_row[2])
             promo_status = f'<p class="promo-result good">Code claimed — {int(promo_row[0])}% off.</p>' if applies and available else '<p class="promo-result bad">Code invalid.</p>'
-        cards = "".join(
-            f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price">${html.escape(str(price))}</div><p>{html.escape(detail)}</p><a href="/checkout/start?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key,'promo':promo})}">Choose {html.escape(name)}</a></article>'''
-            for key, name, price, detail in products
-        )
+        cards_list = []
+        for key, name, price, detail in products:
+            code_applies = bool(promo_row) and (promo_row[4] == "all" or promo_row[4] == key or (promo_row[4] == "all_access" and key == "all"))
+            is_free = bool(promo_row) and int(promo_row[0]) == 100 and bool(promo_row[1]) and (promo_row[2] == 0 or promo_row[3] < promo_row[2]) and code_applies
+            route = "/claim/free" if is_free else "/checkout/start"
+            button = "Click to claim" if is_free else f"Choose {name}"
+            shown_price = "FREE" if is_free else f"${html.escape(str(price))}"
+            cards_list.append(f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price{' free' if is_free else ''}">{shown_price}</div><p>{html.escape(detail)}</p><a href="{route}?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key,'promo':promo})}">{html.escape(button)}</a></article>''')
+        cards = "".join(cards_list)
         page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice Access</title><style>
-        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.promo-result{{font-weight:700;margin:12px 0 0}}.good{{color:#b9df8b}}.bad{{color:#ff9c80}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button>{promo_status}</form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
+        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}.price.free{{color:#9fd06f}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.promo-result{{font-weight:700;margin:12px 0 0}}.good{{color:#b9df8b}}.bad{{color:#ff9c80}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button>{promo_status}</form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
+        return web.Response(text=page, content_type="text/html")
+
+    async def free_claim(self, request: web.Request) -> web.Response:
+        guild_id = request.query.get("guild_id", "")
+        user_id = request.query.get("user_id", "")
+        signature = request.query.get("signature", "")
+        product = request.query.get("product", "")
+        promo = request.query.get("promo", "").strip().upper()[:32]
+        if not self._valid_shop_signature(guild_id, user_id, signature) or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
+            raise web.HTTPForbidden(text="Invalid claim link.")
+        guild = self.guild_or_404(guild_id)
+        member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+        if member is None:
+            raise web.HTTPBadRequest(text="Your Discord account is not available in this server.")
+        with sqlite3.connect(self.oauth_db) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
+            applies = row and (row[4] == "all" or row[4] == product or (row[4] == "all_access" and product == "all"))
+            if not row or int(row[0]) != 100 or not row[1] or not applies or (row[2] and row[3] >= row[2]):
+                raise web.HTTPBadRequest(text="Code invalid.")
+            inserted = db.execute("INSERT OR IGNORE INTO free_claims(guild_id,user_id,product,code,claimed_at) VALUES(?,?,?,?,?)", (str(guild.id), user_id, product, promo, int(time.time())))
+            if inserted.rowcount:
+                claim_id = f"free:{guild.id}:{user_id}:{product}:{promo}"
+                db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (claim_id, str(guild.id), promo, user_id, int(time.time())))
+                db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(guild.id), promo))
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
+        for key in keys:
+            ids = list(settings.get(key, []))
+            if member.id not in ids:
+                ids.append(member.id)
+                await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
+        product_name = {"vc_perms":"VC Perms", "anti_reject":"Anti-Reject", "godmode":"Godmode", "all":"All Access"}[product]
+        discord_url = f"https://discord.com/channels/{guild.id}"
+        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}.</p><a href="{discord_url}">Back to Discord</a></main>'''
         return web.Response(text=page, content_type="text/html")
 
     async def checkout_start(self, request: web.Request) -> web.Response:
@@ -1670,6 +1715,7 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
     app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
     app.router.add_get("/shop", dashboard.shop)
+    app.router.add_get("/claim/free", dashboard.free_claim)
     app.router.add_get("/checkout/start", dashboard.checkout_start)
     app.router.add_get("/checkout/success", dashboard.checkout_success)
     app.router.add_post("/webhooks/stripe", dashboard.stripe_webhook)
