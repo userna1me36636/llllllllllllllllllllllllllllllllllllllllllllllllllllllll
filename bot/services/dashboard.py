@@ -85,6 +85,12 @@ def dashboard_html() -> str:
     .guide-list b { color:var(--text); }
     .defense-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .defense-grid .card { margin:0; }
+    .owner-entry { display:flex; align-items:center; gap:9px; padding:9px 0; border-bottom:1px solid var(--line); }
+    .owner-entry:last-child { border-bottom:0; }
+    .owner-entry > div { min-width:0; flex:1; }
+    .owner-entry b,.owner-entry span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .owner-entry span { color:var(--muted); font-size:11px; margin-top:2px; }
+    .owner-entry button { flex:0 0 auto; padding:7px 9px; color:#ffc1ae; }
     .metric { font-size:34px; font-weight:750; display:block; }
     a.button { display:inline-block; text-decoration:none; text-align:center; }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation:none!important; transition:none!important; } }
@@ -112,6 +118,14 @@ def dashboard_html() -> str:
         <div class="row">
           <button onclick="loadGuilds()">Load Servers</button>
           <button onclick="loadCommands()">Commands</button>
+        </div>
+        <div class="card" data-stay="true">
+          <h2>Owner IDs</h2>
+          <p>Bot owners stay available on every tab.</p>
+          <div id="ownerIdsList"><p>Enter the dashboard token to load owners.</p></div>
+          <label>Add owner ID</label>
+          <input id="newOwnerId" inputmode="numeric" placeholder="Discord user ID">
+          <button onclick="addOwnerId()">Add Owner ID</button>
         </div>
         <div class="card">
           <h2>Quick Controls</h2>
@@ -271,6 +285,7 @@ def dashboard_html() -> str:
   </div>
 <script>
 const $ = id => document.getElementById(id);
+const safe = value => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character]);
 $('token').value = localStorage.ainToken || '';
 function token(){ localStorage.ainToken = $('token').value; return encodeURIComponent($('token').value); }
 function guild(){ return $('guilds').value; }
@@ -291,6 +306,7 @@ async function loadGuilds(){
     $('transferDestination').innerHTML = transferOptions;
     if(data.guilds.length > 1) $('transferDestination').selectedIndex = 1;
     setStatus('Servers loaded.');
+    await loadOwnerIds();
     await loadSummary();
     await loadTransferStatus();
   } catch(e){ setStatus(e.message); }
@@ -338,6 +354,26 @@ async function createRole(){ await api('/api/guild/' + guild() + '/role/create',
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
 async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
+async function loadOwnerIds(){
+  try {
+    const data=await api('/api/owner-ids');
+    $('ownerIdsList').innerHTML=data.owners.map(owner=>`<div class="owner-entry"><div><b>${safe(owner.name)}</b><span>${owner.id}</span></div><button onclick="removeOwnerId('${owner.id}')" aria-label="Remove ${safe(owner.name)}">Remove</button></div>`).join('') || '<p>No owner IDs added yet.</p>';
+  } catch(e){ $('ownerIdsList').innerHTML=`<p>${e.message}</p>`; }
+}
+async function addOwnerId(){
+  const userId=$('newOwnerId').value.trim();
+  try {
+    await api('/api/owner-ids/add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user_id:userId})});
+    $('newOwnerId').value=''; await loadOwnerIds(); setStatus('Owner ID added and saved.');
+  } catch(e){ setStatus(e.message); }
+}
+async function removeOwnerId(userId){
+  if(!confirm('Remove this bot owner?')) return;
+  try {
+    await api('/api/owner-ids/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user_id:userId})});
+    await loadOwnerIds(); setStatus('Owner ID removed.');
+  } catch(e){ setStatus(e.message); }
+}
 let commandCatalog=[];
 async function loadCommandCatalog(){
   if(!guild()) return;
@@ -409,7 +445,7 @@ function setupTabs(){
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
-  document.querySelectorAll('.grid > section.panel > .card').forEach(node=>{
+  document.querySelectorAll('.grid > section.panel > .card:not([data-stay])').forEach(node=>{
     const title=(node.querySelector('h2')?.textContent || '').toLowerCase();
     let tab='overview';
     if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement')) tab='voice';
@@ -462,7 +498,22 @@ class Dashboard:
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.oauth_db = Path(__file__).resolve().parents[2] / "data" / "oauth_authorizations.sqlite3"
+        self.owner_ids_file = Path(__file__).resolve().parents[2] / "data" / "dashboard_owner_ids.json"
         self._init_oauth_db()
+        self._load_owner_ids()
+
+    def _load_owner_ids(self) -> None:
+        if not self.owner_ids_file.exists():
+            return
+        try:
+            saved = json.loads(self.owner_ids_file.read_text(encoding="utf-8"))
+            self.bot.settings.owner_ids = {int(value) for value in saved if str(value).isdigit()}
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            self.bot.log.warning("Could not load dashboard owner IDs; using OWNER_IDS from the environment.")
+
+    def _save_owner_ids(self) -> None:
+        self.owner_ids_file.parent.mkdir(parents=True, exist_ok=True)
+        self.owner_ids_file.write_text(json.dumps(sorted(self.bot.settings.owner_ids), indent=2), encoding="utf-8")
 
     def _init_oauth_db(self) -> None:
         self.oauth_db.parent.mkdir(parents=True, exist_ok=True)
@@ -691,6 +742,44 @@ class Dashboard:
         self.require_token(request)
         data = [{"id": str(guild.id), "name": guild.name, "members": guild.member_count or 0} for guild in self.bot.guilds]
         return web.json_response({"guilds": data})
+
+    async def owner_ids(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        owners = []
+        for user_id in sorted(self.bot.settings.owner_ids):
+            user = self.bot.get_user(user_id)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    user = None
+            owners.append({"id": str(user_id), "name": str(user) if user else "Unknown Discord user"})
+        return web.json_response({"owners": owners})
+
+    async def add_owner_id(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        body = await request.json()
+        raw_id = str(body.get("user_id", "")).strip()
+        if not raw_id.isdigit() or len(raw_id) < 15:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Enter a valid Discord user ID."}), content_type="application/json")
+        user_id = int(raw_id)
+        try:
+            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Discord could not find that user ID."}), content_type="application/json")
+        self.bot.settings.owner_ids.add(user_id)
+        self._save_owner_ids()
+        return web.json_response({"ok": True, "owner": {"id": raw_id, "name": str(user)}})
+
+    async def remove_owner_id(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        body = await request.json()
+        raw_id = str(body.get("user_id", "")).strip()
+        if not raw_id.isdigit():
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Invalid Discord user ID."}), content_type="application/json")
+        self.bot.settings.owner_ids.discard(int(raw_id))
+        self._save_owner_ids()
+        return web.json_response({"ok": True})
 
     async def summary(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1239,6 +1328,9 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
     app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
     app.router.add_get("/api/guilds", dashboard.guilds)
+    app.router.add_get("/api/owner-ids", dashboard.owner_ids)
+    app.router.add_post("/api/owner-ids/add", dashboard.add_owner_id)
+    app.router.add_post("/api/owner-ids/remove", dashboard.remove_owner_id)
     app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
     app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
     app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)
