@@ -15,7 +15,7 @@ import datetime as dt
 from pathlib import Path
 
 import discord
-from aiohttp import ClientSession, web
+from aiohttp import BasicAuth, ClientSession, web
 from discord.ext import commands
 
 from bot.cogs.server_backup import make_code
@@ -295,6 +295,13 @@ def dashboard_html() -> str:
             <li><b>Backup and final check — <code>/backup make_code</code>:</b> save the backup code privately, then run <code>/checklist</code>, <code>/dashboard overview</code>, and <code>/doctor</code> to confirm the server is ready.</li>
           </ol>
         </div>
+        <div class="card" id="paymentLogsCard">
+          <h2>Payment Logs</h2>
+          <p>Only Stripe-confirmed payments appear here. Checkout clicks are never counted as payments.</p>
+          <button onclick="loadPaymentLogs()">Refresh Payments</button>
+          <div id="paymentConfigNotice"></div>
+          <div id="paymentLogs"></div>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -391,6 +398,14 @@ async function createRole(){ await api('/api/guild/' + guild() + '/role/create',
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
 async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
+async function loadPaymentLogs(){
+  if(!guild()) return;
+  try {
+    const data=await api('/api/guild/' + guild() + '/payment-logs');
+    $('paymentConfigNotice').innerHTML=data.stripe_configured ? '' : '<p class="notice">Set PUBLIC_BASE_URL, STRIPE_SECRET_KEY, and STRIPE_WEBHOOK_SECRET to enable verified checkout logs.</p>';
+    $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
+  } catch(e){ setStatus(e.message); }
+}
 async function loadOwnerIds(){
   try {
     const data=await api('/api/owner-ids');
@@ -456,7 +471,7 @@ async function copyAuthorizationLink(){ await navigator.clipboard.writeText(loca
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -479,6 +494,7 @@ function setupTabs(){
     if(title.includes('all commands')) tab='commands';
     if(title.includes('defense center')) tab='defense';
     if(title.includes('bot setup guide')) tab='setup';
+    if(title.includes('payment logs')) tab='payments';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -493,6 +509,7 @@ function showTab(id){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.dataset.tab===id));
   document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
   if(id==='commands' && !commandCatalog.length) loadCommandCatalog();
+  if(id==='payments') loadPaymentLogs();
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){
@@ -564,6 +581,19 @@ class Dashboard:
                     expires_at INTEGER NOT NULL,
                     scope TEXT NOT NULL,
                     authorized_at INTEGER NOT NULL
+                )"""
+            )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS payment_logs (
+                    session_id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    product TEXT NOT NULL,
+                    amount INTEGER NOT NULL,
+                    currency TEXT NOT NULL,
+                    customer_email TEXT,
+                    payment_methods TEXT,
+                    paid_at INTEGER NOT NULL
                 )"""
             )
 
@@ -856,6 +886,107 @@ class Dashboard:
             offer[f"{key}_url"] = url
         await self.bot.db.set_settings_value(guild.id, "vc_reject_offer", offer, self.bot.settings.default_prefix)
         return web.json_response({"ok": True, "offer": offer})
+
+    def _valid_shop_signature(self, guild_id: str, user_id: str, signature: str) -> bool:
+        secret = self.bot.settings.oauth_state_secret or self.bot.settings.dashboard_token
+        if not secret or not guild_id.isdigit() or not user_id.isdigit():
+            return False
+        expected = hmac.new(secret.encode(), f"{guild_id}:{user_id}".encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    async def shop(self, request: web.Request) -> web.Response:
+        guild_id = request.query.get("guild_id", "")
+        user_id = request.query.get("user_id", "")
+        signature = request.query.get("signature", "")
+        selected = request.query.get("product", "")
+        if not self._valid_shop_signature(guild_id, user_id, signature):
+            raise web.HTTPForbidden(text="This checkout link is invalid or incomplete.")
+        guild = self.guild_or_404(guild_id)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        offer = settings.get("vc_reject_offer", {})
+        products = [
+            ("vc_perms", "VC Perms", offer.get("vc_perms_price", "15"), "Voice access permissions"),
+            ("anti_reject", "Anti-Reject", offer.get("anti_reject_price", "20"), "Protected VC access"),
+            ("godmode", "Godmode", offer.get("godmode_price", "30"), "Full VC protection"),
+            ("all", "All Access", offer.get("all_price", "45"), "Complete access bundle"),
+        ]
+        cards = "".join(
+            f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price">${html.escape(str(price))}</div><p>{html.escape(detail)}</p><a href="/checkout/start?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key})}">Choose {html.escape(name)}</a></article>'''
+            for key, name, price, detail in products
+        )
+        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice Access</title><style>
+        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
+        return web.Response(text=page, content_type="text/html")
+
+    async def checkout_start(self, request: web.Request) -> web.Response:
+        guild_id, user_id = request.query.get("guild_id", ""), request.query.get("user_id", "")
+        signature, product = request.query.get("signature", ""), request.query.get("product", "")
+        if not self._valid_shop_signature(guild_id, user_id, signature):
+            raise web.HTTPForbidden(text="Invalid checkout link.")
+        product_names = {"vc_perms": "VC Perms", "anti_reject": "Anti-Reject", "godmode": "Godmode", "all": "All Access"}
+        if product not in product_names:
+            raise web.HTTPBadRequest(text="Unknown product.")
+        guild = self.guild_or_404(guild_id)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        offer = settings.get("vc_reject_offer", {})
+        default_prices = {"vc_perms": "15", "anti_reject": "20", "godmode": "30", "all": "45"}
+        price = float(offer.get(f"{product}_price", default_prices[product]))
+        secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if not secret_key or not public_url:
+            raise web.HTTPServiceUnavailable(text="Checkout is not configured yet. Set STRIPE_SECRET_KEY and PUBLIC_BASE_URL.")
+        form = {
+            "mode": "payment", "success_url": f"{public_url}/checkout/success", "cancel_url": f"{public_url}/shop?{urllib.parse.urlencode(dict(request.query))}",
+            "line_items[0][price_data][currency]": "usd", "line_items[0][price_data][product_data][name]": product_names[product],
+            "line_items[0][price_data][unit_amount]": str(round(price * 100)), "line_items[0][quantity]": "1",
+            "metadata[guild_id]": guild_id, "metadata[user_id]": user_id, "metadata[product]": product,
+            "client_reference_id": f"discord_{user_id}",
+        }
+        async with ClientSession() as session:
+            async with session.post("https://api.stripe.com/v1/checkout/sessions", data=form, auth=BasicAuth(secret_key, "")) as response:
+                data = await response.json()
+                if response.status >= 300 or not data.get("url"):
+                    self.bot.log.error("Stripe Checkout error: %s", data.get("error", {}).get("message", data))
+                    raise web.HTTPBadGateway(text="The payment provider could not start checkout.")
+        raise web.HTTPFound(data["url"])
+
+    async def checkout_success(self, _: web.Request) -> web.Response:
+        return web.Response(text="<!doctype html><meta charset='utf-8'><body style='background:#111210;color:#f4f1e8;font:18px Segoe UI;padding:4rem'><h1>Payment received</h1><p>Your payment is being verified. Server staff can see confirmed payments in their dashboard.</p></body>", content_type="text/html")
+
+    async def stripe_webhook(self, request: web.Request) -> web.Response:
+        raw = await request.read()
+        signature_header = request.headers.get("Stripe-Signature", "")
+        secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+        pieces = [part.split("=", 1) for part in signature_header.split(",") if "=" in part]
+        timestamp = next((value for key, value in pieces if key == "t"), "")
+        signatures = [value for key, value in pieces if key == "v1"]
+        if not secret or not timestamp.isdigit() or abs(int(time.time()) - int(timestamp)) > 300:
+            raise web.HTTPBadRequest(text="Invalid webhook signature.")
+        expected = hmac.new(secret.encode(), timestamp.encode() + b"." + raw, hashlib.sha256).hexdigest()
+        if not any(hmac.compare_digest(expected, value) for value in signatures):
+            raise web.HTTPBadRequest(text="Invalid webhook signature.")
+        event = json.loads(raw)
+        if event.get("type") == "checkout.session.completed":
+            session = event.get("data", {}).get("object", {})
+            if session.get("payment_status") == "paid":
+                metadata = session.get("metadata", {})
+                customer = session.get("customer_details") or {}
+                with sqlite3.connect(self.oauth_db) as db:
+                    db.execute("""INSERT OR IGNORE INTO payment_logs(session_id,guild_id,user_id,product,amount,currency,customer_email,payment_methods,paid_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (session["id"], str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")), int(session.get("amount_total", 0)), str(session.get("currency", "usd")), customer.get("email"), ", ".join(session.get("payment_method_types", [])), int(time.time())))
+        return web.json_response({"received": True})
+
+    async def payment_logs(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        with sqlite3.connect(self.oauth_db) as db:
+            db.row_factory = sqlite3.Row
+            rows = [dict(row) for row in db.execute("SELECT * FROM payment_logs WHERE guild_id=? ORDER BY paid_at DESC LIMIT 200", (str(guild.id),))]
+        for row in rows:
+            user = self.bot.get_user(int(row["user_id"])) if row["user_id"].isdigit() else None
+            row["username"] = str(user) if user else "Unknown user"
+            row["amount_display"] = f"{row['amount'] / 100:.2f} {row['currency'].upper()}"
+        return web.json_response({"payments": rows, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY") and os.getenv("STRIPE_WEBHOOK_SECRET") and os.getenv("PUBLIC_BASE_URL"))})
 
     async def summary(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1403,12 +1534,17 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/", dashboard.index)
     app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
     app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
+    app.router.add_get("/shop", dashboard.shop)
+    app.router.add_get("/checkout/start", dashboard.checkout_start)
+    app.router.add_get("/checkout/success", dashboard.checkout_success)
+    app.router.add_post("/webhooks/stripe", dashboard.stripe_webhook)
     app.router.add_get("/api/guilds", dashboard.guilds)
     app.router.add_get("/api/owner-ids", dashboard.owner_ids)
     app.router.add_post("/api/owner-ids/add", dashboard.add_owner_id)
     app.router.add_post("/api/owner-ids/remove", dashboard.remove_owner_id)
     app.router.add_get("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_get)
     app.router.add_post("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_save)
+    app.router.add_get("/api/guild/{guild_id}/payment-logs", dashboard.payment_logs)
     app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
     app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
     app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)

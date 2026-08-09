@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import hmac
 import json
+import os
 import time
+import urllib.parse
 
 import discord
 from discord import app_commands
@@ -113,8 +117,19 @@ class CommandMenu(commands.Cog):
             ("Godmode", str(data["godmode_price"]), str(data.get("godmode_url", ""))),
             ("All Access", str(data["all_price"]), str(data.get("all_url", ""))),
         ]
+        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        signing_secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
+        if public_url and signing_secret and os.getenv("STRIPE_SECRET_KEY", "").strip():
+            payload = f"{member.guild.id}:{member.id}"
+            signature = hmac.new(signing_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            shop_url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(member.guild.id), "user_id": str(member.id), "signature": signature})
+            offers = [(label, price, f"{shop_url}&product={key}") for (label, price, _), key in zip(offers, ("vc_perms", "anti_reject", "godmode", "all"))]
         view = VcOfferView(offers)
         message = embed(str(data["title"])[:256], f"{str(data['message'])[:3000]}\n\nServer: **{member.guild.name}**\nVoice channel: **{channel.name}**")
+        message.add_field(name="VC Perms", value=f"${data['vc_perms_price']} · Voice access permissions", inline=True)
+        message.add_field(name="Anti-Reject", value=f"${data['anti_reject_price']} · Protected VC access", inline=True)
+        message.add_field(name="Godmode", value=f"${data['godmode_price']} · Full VC protection", inline=True)
+        message.add_field(name="All Access", value=f"${data['all_price']} · Complete access bundle", inline=True)
         message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
         try:
             await member.send(embed=message, view=view if view.children else None)

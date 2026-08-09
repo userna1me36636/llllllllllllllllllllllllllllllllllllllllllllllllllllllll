@@ -19,6 +19,15 @@ FFMPEG_OPTS = {
 }
 
 
+def youtube_cookies_configured() -> bool:
+    cookie_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+    return bool(
+        (cookie_file and Path(cookie_file).is_file())
+        or os.getenv("YTDLP_COOKIES_TEXT", "").strip()
+        or os.getenv("YTDLP_COOKIES_BASE64", "").strip()
+    )
+
+
 def ytdl_options() -> dict:
     opts = {
         "format": os.getenv("YTDLP_FORMAT", "ba[ext=m4a]/ba[acodec^=mp4a]/bestaudio/best"),
@@ -100,9 +109,14 @@ class GuildPlayer:
         self.volume = 0.6
 
     async def resolve(self, query: str, requester_id: int) -> list[Track]:
+        cleaned_query = query.strip()
+        lookup = cleaned_query
+        if not cleaned_query.lower().startswith(("http://", "https://")) and not youtube_cookies_configured():
+            lookup = f"scsearch1:{cleaned_query}"
+
         def run() -> dict:
             with yt_dlp.YoutubeDL(ytdl_options()) as ytdl:
-                return ytdl.extract_info(query, download=False)
+                return ytdl.extract_info(lookup, download=False)
 
         data = await asyncio.to_thread(run)
         entries = data.get("entries") or [data]
@@ -114,7 +128,7 @@ class GuildPlayer:
                 Track(
                     item.get("title", "Unknown track"),
                     item["url"],
-                    item.get("webpage_url", query),
+                    item.get("webpage_url", cleaned_query),
                     requester_id,
                     item.get("duration"),
                     None,
