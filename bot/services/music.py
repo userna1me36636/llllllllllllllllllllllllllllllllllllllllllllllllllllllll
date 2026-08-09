@@ -87,6 +87,7 @@ class Track:
     uploader: str | None = None
     thumbnail: str | None = None
     view_count: int | None = None
+    fallback_used: bool = False
 
 
 class GuildPlayer:
@@ -146,6 +147,30 @@ class GuildPlayer:
 
         track.local_path = await asyncio.to_thread(run)
         return track.local_path
+
+    async def switch_to_soundcloud(self, track: Track) -> bool:
+        if track.fallback_used:
+            return False
+
+        def run() -> dict | None:
+            opts = ytdl_options()
+            opts.update({"noplaylist": True, "quiet": True})
+            with yt_dlp.YoutubeDL(opts) as ytdl:
+                data = ytdl.extract_info(f"scsearch1:{track.title}", download=False)
+            entries = data.get("entries") or []
+            return next((entry for entry in entries if entry and entry.get("url")), None)
+
+        info = await asyncio.to_thread(run)
+        track.fallback_used = True
+        if not info:
+            return False
+        track.url = info["url"]
+        track.webpage_url = info.get("webpage_url") or info.get("original_url") or track.webpage_url
+        track.duration = info.get("duration") or track.duration
+        track.uploader = info.get("uploader") or track.uploader
+        track.thumbnail = info.get("thumbnail") or track.thumbnail
+        track.local_path = None
+        return True
 
     def source(self, track: Track, mode: int = 0) -> discord.AudioSource:
         options = "-vn -loglevel warning"

@@ -145,11 +145,20 @@ class Music(commands.Cog):
 
     def playback_error_embed(self, error: Exception) -> discord.Embed:
         if self.youtube_login_required(error):
-            return embed(
+            message = embed(
                 "YouTube Login Required",
                 "YouTube blocked playback from this server. Add a Netscape-format cookies.txt export to Railway as `YTDLP_COOKIES_BASE64`, redeploy, then run `/doctor`. Do not post cookies in Discord.",
             )
-        return embed("Playback Error", "This track could not be played after the stream and local-audio fallback were tried. Try another source or run `/music doctor`.")
+        else:
+            message = embed("Playback Error", "This track could not be played after the available source fallbacks were tried. Try another song or run `/music doctor`.")
+        message.set_footer(text="AinBot Music")
+        return message
+
+    @staticmethod
+    def music_notice(title: str, description: str) -> discord.Embed:
+        message = embed(title, description)
+        message.set_footer(text="AinBot Music")
+        return message
 
     async def ensure_voice(self, interaction: discord.Interaction) -> discord.VoiceClient | None:
         member = interaction.user
@@ -306,12 +315,26 @@ class Music(commands.Cog):
                 self.playback_attempts[guild.id] = attempt_now + 1
                 if attempt_now + 1 == 2 and not track.local_path:
                     try:
-                        await channel.send(embed=embed("Music Fallback", f"The direct stream failed. Trying one local-audio fallback for `{track.title[:120]}`."))
+                        await channel.send(embed=self.music_notice("Music Fallback", f"The direct stream failed. Trying one local-audio fallback for `{track.title[:120]}`."))
                     except discord.HTTPException:
                         pass
                     try:
                         await player.download_track(track)
                     except Exception as download_error:
+                        if self.youtube_login_required(download_error) and not track.fallback_used:
+                            try:
+                                switched = await player.switch_to_soundcloud(track)
+                            except Exception as fallback_error:
+                                self.bot.log.warning("SoundCloud fallback failed in guild %s: %s", guild.id, fallback_error)
+                                switched = False
+                            if switched:
+                                self.playback_attempts[guild.id] = 0
+                                try:
+                                    await channel.send(embed=self.music_notice("Source Switched", f"YouTube blocked this server, so I found a SoundCloud source for `{track.title[:120]}`."))
+                                except discord.HTTPException:
+                                    pass
+                                await self.start_track(guild, channel, track)
+                                return
                         self.playback_attempts[guild.id] = 0
                         await report_after_error(download_error)
                         await self.play_next(guild, channel)
