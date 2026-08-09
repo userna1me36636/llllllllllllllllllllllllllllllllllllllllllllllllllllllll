@@ -585,6 +585,33 @@ class Dashboard:
         self._init_oauth_db()
         self._load_owner_ids()
 
+    async def fulfill_access(self, guild_id: str, user_id: str, product: str) -> tuple[bool, str]:
+        if not guild_id.isdigit() or not user_id.isdigit() or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
+            return False, "Invalid fulfillment details."
+        guild = self.bot.get_guild(int(guild_id))
+        if guild is None:
+            return False, "The bot is not connected to that server."
+        member = guild.get_member(int(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(user_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return False, "The Discord member could not be found."
+        role_names = {"vc_perms": "VC Perms", "anti_reject": "Anti-Reject", "godmode": "VC Godmode", "all": "All Access"}
+        role = discord.utils.get(guild.roles, name=role_names[product])
+        try:
+            if role is None:
+                role = await guild.create_role(name=role_names[product], reason="Automatic store fulfillment")
+            await member.add_roles(role, reason=f"Automatic store fulfillment: {product}")
+        except discord.Forbidden:
+            return False, "Move the bot role above the access roles and give it Manage Roles."
+        except discord.HTTPException:
+            return False, "Discord could not create or assign the access role."
+        fulfilled, fulfillment_detail = await self.fulfill_access(str(guild.id), user_id, product)
+        if not fulfilled:
+            raise web.HTTPServiceUnavailable(text=f"The claim was saved, but Discord could not add the role: {fulfillment_detail} You can retry this claim after fixing the bot role.")
+        return True, role.name
+
     def _load_owner_ids(self) -> None:
         if not self.owner_ids_file.exists():
             return
@@ -1011,7 +1038,7 @@ class Dashboard:
                 await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
         product_name = {"vc_perms":"VC Perms", "anti_reject":"Anti-Reject", "godmode":"Godmode", "all":"All Access"}[product]
         discord_url = f"https://discord.com/channels/{guild.id}"
-        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}.</p><a href="{discord_url}">Back to Discord</a></main>'''
+        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}. The <b>{html.escape(fulfillment_detail)}</b> role was added automatically.</p><a href="{discord_url}">Back to Discord</a></main>'''
         return web.Response(text=page, content_type="text/html")
 
     async def checkout_start(self, request: web.Request) -> web.Response:
@@ -1087,6 +1114,10 @@ class Dashboard:
                         inserted = db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (session["id"], str(metadata.get("guild_id", "")), promo, str(metadata.get("user_id", "")), int(time.time())))
                         if inserted.rowcount:
                             db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(metadata.get("guild_id", "")), promo))
+                fulfilled, detail = await self.fulfill_access(str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")))
+                if not fulfilled:
+                    self.bot.log.error("Automatic payment fulfillment failed for Stripe session %s: %s", session.get("id"), detail)
+                    raise web.HTTPServiceUnavailable(text="Payment was recorded but Discord role fulfillment will be retried.")
         return web.json_response({"received": True})
 
     async def payment_logs(self, request: web.Request) -> web.Response:
