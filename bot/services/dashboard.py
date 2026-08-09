@@ -71,7 +71,7 @@ def dashboard_html() -> str:
     .stat span { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
     textarea { min-height:92px; resize:vertical; }
     .wide { grid-column:1 / -1; }
-    .tabs { display:flex; gap:4px; overflow-x:auto; padding:0 0 14px; margin-bottom:2px; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+    .tabs { display:flex; flex-wrap:wrap; gap:5px; overflow:visible; padding:0 0 14px; margin-bottom:2px; border-bottom:1px solid var(--line); }
     .tab-button { white-space:nowrap; background:transparent; color:var(--muted); border-color:transparent; border-radius:7px; }
     .tab-button:hover { transform:none; background:#252621; }
     .tab-button.active { color:var(--text); border-color:#684032; background:var(--accent-soft); }
@@ -494,7 +494,7 @@ async function copyAuthorizationLink(){ await navigator.clipboard.writeText(loca
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -513,7 +513,7 @@ function setupTabs(){
     if(title.includes('music')) tab='music';
     if(title.includes('security')) tab='security';
     if(title.includes('economy')) tab='economy';
-    if(title.includes('member transfer')) tab='members';
+    if(title.includes('member transfer')) tab='transfer';
     if(title.includes('all commands')) tab='commands';
     if(title.includes('defense center')) tab='defense';
     if(title.includes('bot setup guide')) tab='setup';
