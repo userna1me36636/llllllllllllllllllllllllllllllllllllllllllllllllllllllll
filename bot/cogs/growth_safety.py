@@ -401,9 +401,13 @@ class GrowthSafety(commands.Cog):
     async def stats_setup(self, interaction: discord.Interaction, category: discord.CategoryChannel | None = None) -> None:
         await interaction.response.defer(ephemeral=True)
         category = category or await interaction.guild.create_category("Server Stats", reason="Stats setup")
+        try:
+            await category.edit(position=0, reason="Keep live stats near the top")
+        except discord.HTTPException:
+            pass
         existing = {channel.name.split(":")[0].lower(): channel for channel in category.voice_channels}
         ids = {}
-        for key in ("Members", "Boosts", "Roles"):
+        for key in ("Members", "In VC", "Top Balance", "MVP Winner", "Giveaway Winner"):
             channel = existing.get(key.lower())
             if channel is None:
                 channel = await interaction.guild.create_voice_channel(f"{key}: 0", category=category, reason="Stats setup")
@@ -416,19 +420,52 @@ class GrowthSafety(commands.Cog):
     async def update_stats(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
         ids = settings.get("stats_channels", {})
-        values = {"members": len(guild.members), "boosts": guild.premium_subscription_count or 0, "roles": len(guild.roles)}
+        voice_count = sum(1 for member in guild.members if member.voice and member.voice.channel)
+        top = await self.bot.db.fetchrow("SELECT user_id,wallet+bank AS total FROM economy WHERE guild_id=? ORDER BY total DESC LIMIT 1", guild.id)
+        top_member = guild.get_member(int(top["user_id"])) if top else None
+        mvp_id = int(settings.get("mvp_winner_id", 0) or 0)
+        giveaway = settings.get("last_giveaway_winner", {})
+        giveaway_id = int(giveaway.get("user_id", 0) or 0)
+        values = {
+            "members": str(len(guild.members)),
+            "in vc": str(voice_count),
+            "top balance": f"{top_member.display_name} - {top['total']}" if top_member and top else "None",
+            "mvp winner": guild.get_member(mvp_id).display_name if guild.get_member(mvp_id) else "None",
+            "giveaway winner": guild.get_member(giveaway_id).display_name if guild.get_member(giveaway_id) else "None",
+        }
         for key, value in values.items():
             channel = guild.get_channel(int(ids.get(key, 0) or 0))
-            if isinstance(channel, discord.VoiceChannel) and channel.name != f"{key.title()}: {value}":
+            new_name = f"{key.title()}: {value}"[:100]
+            if isinstance(channel, discord.VoiceChannel) and channel.name != new_name:
                 try:
-                    await channel.edit(name=f"{key.title()}: {value}")
+                    await channel.edit(name=new_name)
                 except discord.HTTPException:
                     pass
+
+    @stats.command(name="mvp", description="Set the member shown in the MVP winner channel")
+    @app_admin()
+    async def stats_mvp(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        await self.bot.db.set_settings_value(interaction.guild_id, "mvp_winner_id", member.id, self.bot.settings.default_prefix)
+        await self.update_stats(interaction.guild)
+        await interaction.response.send_message(f"MVP winner set to {member.mention}.", ephemeral=True)
 
     @tasks.loop(minutes=10)
     async def stats_updater(self) -> None:
         for guild in self.bot.guilds:
             await self.update_stats(guild)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        await self.update_stats(member.guild)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member) -> None:
+        await self.update_stats(member.guild)
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
+        if before.channel != after.channel:
+            await self.update_stats(member.guild)
 
     @stats_updater.before_loop
     async def before_stats_updater(self) -> None:

@@ -302,6 +302,21 @@ def dashboard_html() -> str:
           <div id="paymentConfigNotice"></div>
           <div id="paymentLogs"></div>
         </div>
+        <div class="card">
+          <h2>Promo Codes</h2><p>Create percentage discounts and track active codes and confirmed uses.</p>
+          <div class="row"><input id="promoCode" maxlength="32" placeholder="CODE"><input id="promoPercent" type="number" min="1" max="100" placeholder="% off"><input id="promoMax" type="number" min="0" placeholder="Max uses (0 unlimited)"></div>
+          <button onclick="savePromo()">Create or Update Code</button><button onclick="loadPromos()">Refresh Codes</button><div id="promoList"></div>
+        </div>
+        <div class="card">
+          <h2>Random Giveaway</h2><p>One outcome per line. Add <code>|weight</code> to control how often it can win.</p>
+          <textarea id="giveawayOutcomes" placeholder="10% off|35&#10;Nitro|10&#10;$15 credit|15"></textarea>
+          <button onclick="saveGiveawayConfig()">Save Giveaway Picks</button>
+        </div>
+        <div class="card">
+          <h2>Live Channels</h2><p>Creates locked voice channels for member count, VC count, top balance, MVP winner, and giveaway winner.</p>
+          <label>MVP winner</label><select id="mvpMember"></select>
+          <div class="row"><button onclick="setupLiveChannels()">Create or Refresh Channels</button><button onclick="setMvp()">Set MVP Winner</button></div>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -341,6 +356,7 @@ async function loadSummary(){
   $('voiceChannels').innerHTML = data.voice_channels.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
   $('textChannels').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
   $('members').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  $('mvpMember').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('roles').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   await loadVcOffer();
@@ -406,6 +422,13 @@ async function loadPaymentLogs(){
     $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
   } catch(e){ setStatus(e.message); }
 }
+async function loadPromos(){ const data=await api('/api/guild/'+guild()+'/promos'); $('promoList').innerHTML=data.codes.map(c=>`<div class="cmd"><b>${safe(c.code)} · ${c.percent_off}% off</b><span>${c.active?'Active':'Inactive'} · ${c.uses}/${c.max_uses||'unlimited'} uses · Used by: ${safe(c.used_by||'Nobody yet')}</span><button onclick="togglePromo('${safe(c.code)}',${c.percent_off},${c.max_uses},${!c.active})">${c.active?'Disable':'Enable'}</button></div>`).join('')||'<p>No promo codes yet.</p>'; }
+async function savePromo(){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('promoCode').value,percent_off:$('promoPercent').value,max_uses:$('promoMax').value,active:true})}); setStatus('Promo code saved.'); loadPromos(); }
+async function togglePromo(code,percent_off,max_uses,active){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code,percent_off,max_uses,active})}); loadPromos(); }
+async function loadGiveawayConfig(){ const data=await api('/api/guild/'+guild()+'/giveaway-config'); $('giveawayOutcomes').value=data.outcomes.map(x=>x.name+'|'+x.weight).join('\n'); }
+async function saveGiveawayConfig(){ const outcomes=$('giveawayOutcomes').value.split('\n').map(line=>{const p=line.split('|');return {name:p[0].trim(),weight:Number(p[1]||1)}}).filter(x=>x.name&&x.weight>0); await api('/api/guild/'+guild()+'/giveaway-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({outcomes})}); setStatus('Giveaway picks saved.'); }
+async function setupLiveChannels(){ await api('/api/guild/'+guild()+'/live-channels',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'setup'})}); setStatus('Live channels created and refreshed.'); }
+async function setMvp(){ await api('/api/guild/'+guild()+'/live-channels',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'mvp',member_id:$('mvpMember').value})}); setStatus('MVP winner updated.'); }
 async function loadOwnerIds(){
   try {
     const data=await api('/api/owner-ids');
@@ -471,7 +494,7 @@ async function copyAuthorizationLink(){ await navigator.clipboard.writeText(loca
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['growth','Promos & Giveaways'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -495,6 +518,7 @@ function setupTabs(){
     if(title.includes('defense center')) tab='defense';
     if(title.includes('bot setup guide')) tab='setup';
     if(title.includes('payment logs')) tab='payments';
+    if(title.includes('promo')||title.includes('random giveaway')||title.includes('live channels')) tab='growth';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -510,6 +534,7 @@ function showTab(id){
   document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
   if(id==='commands' && !commandCatalog.length) loadCommandCatalog();
   if(id==='payments') loadPaymentLogs();
+  if(id==='growth'){ loadPromos(); loadGiveawayConfig(); }
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){
@@ -596,6 +621,14 @@ class Dashboard:
                     paid_at INTEGER NOT NULL
                 )"""
             )
+            db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
+                guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
+                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,code))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
+                session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
+                user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
 
     def _oauth_configured(self) -> bool:
         settings = self.bot.settings
@@ -899,6 +932,7 @@ class Dashboard:
         user_id = request.query.get("user_id", "")
         signature = request.query.get("signature", "")
         selected = request.query.get("product", "")
+        promo = request.query.get("promo", "").strip().upper()[:32]
         if not self._valid_shop_signature(guild_id, user_id, signature):
             raise web.HTTPForbidden(text="This checkout link is invalid or incomplete.")
         guild = self.guild_or_404(guild_id)
@@ -911,11 +945,11 @@ class Dashboard:
             ("all", "All Access", offer.get("all_price", "45"), "Complete access bundle"),
         ]
         cards = "".join(
-            f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price">${html.escape(str(price))}</div><p>{html.escape(detail)}</p><a href="/checkout/start?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key})}">Choose {html.escape(name)}</a></article>'''
+            f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price">${html.escape(str(price))}</div><p>{html.escape(detail)}</p><a href="/checkout/start?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key,'promo':promo})}">Choose {html.escape(name)}</a></article>'''
             for key, name, price, detail in products
         )
         page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice Access</title><style>
-        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
+        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button></form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
         return web.Response(text=page, content_type="text/html")
 
     async def checkout_start(self, request: web.Request) -> web.Response:
@@ -931,6 +965,16 @@ class Dashboard:
         offer = settings.get("vc_reject_offer", {})
         default_prices = {"vc_perms": "15", "anti_reject": "20", "godmode": "30", "all": "45"}
         price = float(offer.get(f"{product}_price", default_prices[product]))
+        promo = request.query.get("promo", "").strip().upper()[:32]
+        percent_off = 0
+        if promo:
+            with sqlite3.connect(self.oauth_db) as db:
+                row = db.execute("SELECT percent_off,active,max_uses,uses FROM promo_codes WHERE guild_id=? AND code=?", (guild_id, promo)).fetchone()
+            if row and row[1] and (row[2] == 0 or row[3] < row[2]):
+                percent_off = int(row[0])
+            else:
+                raise web.HTTPBadRequest(text="That promo code is invalid, inactive, or fully used.")
+        final_price = max(0.5, price * (100 - percent_off) / 100)
         secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
         public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
         if not secret_key or not public_url:
@@ -938,8 +982,9 @@ class Dashboard:
         form = {
             "mode": "payment", "success_url": f"{public_url}/checkout/success", "cancel_url": f"{public_url}/shop?{urllib.parse.urlencode(dict(request.query))}",
             "line_items[0][price_data][currency]": "usd", "line_items[0][price_data][product_data][name]": product_names[product],
-            "line_items[0][price_data][unit_amount]": str(round(price * 100)), "line_items[0][quantity]": "1",
+            "line_items[0][price_data][unit_amount]": str(round(final_price * 100)), "line_items[0][quantity]": "1",
             "metadata[guild_id]": guild_id, "metadata[user_id]": user_id, "metadata[product]": product,
+            "metadata[promo_code]": promo, "metadata[percent_off]": str(percent_off),
             "client_reference_id": f"discord_{user_id}",
         }
         async with ClientSession() as session:
@@ -974,6 +1019,11 @@ class Dashboard:
                 with sqlite3.connect(self.oauth_db) as db:
                     db.execute("""INSERT OR IGNORE INTO payment_logs(session_id,guild_id,user_id,product,amount,currency,customer_email,payment_methods,paid_at) VALUES(?,?,?,?,?,?,?,?,?)""",
                         (session["id"], str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")), int(session.get("amount_total", 0)), str(session.get("currency", "usd")), customer.get("email"), ", ".join(session.get("payment_method_types", [])), int(time.time())))
+                    promo = str(metadata.get("promo_code", "")).upper()
+                    if promo:
+                        inserted = db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (session["id"], str(metadata.get("guild_id", "")), promo, str(metadata.get("user_id", "")), int(time.time())))
+                        if inserted.rowcount:
+                            db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(metadata.get("guild_id", "")), promo))
         return web.json_response({"received": True})
 
     async def payment_logs(self, request: web.Request) -> web.Response:
@@ -987,6 +1037,70 @@ class Dashboard:
             row["username"] = str(user) if user else "Unknown user"
             row["amount_display"] = f"{row['amount'] / 100:.2f} {row['currency'].upper()}"
         return web.json_response({"payments": rows, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY") and os.getenv("STRIPE_WEBHOOK_SECRET") and os.getenv("PUBLIC_BASE_URL"))})
+
+    async def promos(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        if request.method == "POST":
+            body = await request.json()
+            code = "".join(ch for ch in str(body.get("code", "")).upper() if ch.isalnum() or ch in "-_")[:32]
+            percent = int(body.get("percent_off", 0) or 0)
+            max_uses = int(body.get("max_uses", 0) or 0)
+            if not code or not 1 <= percent <= 100 or max_uses < 0:
+                raise web.HTTPBadRequest(text=json.dumps({"error": "Enter a code, 1-100 percent off, and a valid max-use count."}), content_type="application/json")
+            with sqlite3.connect(self.oauth_db) as db:
+                db.execute("INSERT INTO promo_codes(guild_id,code,percent_off,active,max_uses,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(guild_id,code) DO UPDATE SET percent_off=excluded.percent_off,active=excluded.active,max_uses=excluded.max_uses", (str(guild.id), code, percent, int(bool(body.get("active", True))), max_uses, int(time.time())))
+        with sqlite3.connect(self.oauth_db) as db:
+            db.row_factory = sqlite3.Row
+            rows = [dict(row) for row in db.execute("SELECT p.*,GROUP_CONCAT(u.user_id) AS used_by FROM promo_codes p LEFT JOIN promo_uses u ON u.guild_id=p.guild_id AND u.code=p.code WHERE p.guild_id=? GROUP BY p.code ORDER BY p.created_at DESC", (str(guild.id),))]
+        for row in rows:
+            names = []
+            for raw_id in str(row.get("used_by") or "").split(","):
+                member = guild.get_member(int(raw_id)) if raw_id.isdigit() else None
+                if member:
+                    names.append(member.display_name)
+            row["used_by"] = ", ".join(names)
+        return web.json_response({"codes": rows})
+
+    async def giveaway_config(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        if request.method == "POST":
+            body = await request.json()
+            outcomes = [{"name": str(x.get("name", ""))[:80], "weight": min(int(x.get("weight", 1) or 1), 10000)} for x in body.get("outcomes", [])[:50] if str(x.get("name", "")).strip() and int(x.get("weight", 0) or 0) > 0]
+            await self.bot.db.set_settings_value(guild.id, "random_giveaway_outcomes", outcomes, self.bot.settings.default_prefix)
+        else:
+            outcomes = settings.get("random_giveaway_outcomes") or [{"name":"10% off","weight":35},{"name":"15% off","weight":25},{"name":"Nitro","weight":10},{"name":"$15 credit","weight":15}]
+        return web.json_response({"outcomes": outcomes})
+
+    async def live_channels(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        if body.get("action") == "mvp":
+            member = self.get_member_or_404(guild, body.get("member_id"))
+            await self.bot.db.set_settings_value(guild.id, "mvp_winner_id", member.id, self.bot.settings.default_prefix)
+        elif body.get("action") == "setup":
+            category = discord.utils.get(guild.categories, name="Server Stats") or await guild.create_category("Server Stats", reason="Dashboard live-channel setup")
+            try:
+                await category.edit(position=0, reason="Keep live stats near the top")
+            except discord.HTTPException:
+                pass
+            ids = {}
+            settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+            old = settings.get("stats_channels", {})
+            for key in ("members", "in vc", "top balance", "mvp winner", "giveaway winner"):
+                channel = guild.get_channel(int(old.get(key, 0) or 0))
+                if not isinstance(channel, discord.VoiceChannel):
+                    channel = await guild.create_voice_channel(f"{key.title()}: --", category=category, reason="Dashboard live-channel setup")
+                    await channel.set_permissions(guild.default_role, connect=False)
+                ids[key] = channel.id
+            await self.bot.db.set_settings_value(guild.id, "stats_channels", ids, self.bot.settings.default_prefix)
+        growth = self.bot.get_cog("GrowthSafety")
+        if growth:
+            await growth.update_stats(guild)
+        return web.json_response({"ok": True})
 
     async def summary(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1545,6 +1659,11 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_get)
     app.router.add_post("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_save)
     app.router.add_get("/api/guild/{guild_id}/payment-logs", dashboard.payment_logs)
+    app.router.add_get("/api/guild/{guild_id}/promos", dashboard.promos)
+    app.router.add_post("/api/guild/{guild_id}/promos", dashboard.promos)
+    app.router.add_get("/api/guild/{guild_id}/giveaway-config", dashboard.giveaway_config)
+    app.router.add_post("/api/guild/{guild_id}/giveaway-config", dashboard.giveaway_config)
+    app.router.add_post("/api/guild/{guild_id}/live-channels", dashboard.live_channels)
     app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
     app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
     app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)
