@@ -16,13 +16,38 @@ from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_duration, pulse_line, style_embed, theme_color_from_data
 
 
+class VcOfferButton(discord.ui.Button):
+    def __init__(self, label: str, price: str, url: str, emoji: str | None) -> None:
+        super().__init__(label=f"{label} · ${price}", emoji=emoji, style=discord.ButtonStyle.secondary)
+        self.checkout_url = url
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        parsed = urllib.parse.urlparse(self.checkout_url)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        guild_id = str(interaction.guild_id or query.get("guild_id", ""))
+        secret = getattr(interaction.client.settings, "oauth_state_secret", None) or getattr(interaction.client.settings, "dashboard_token", None)
+        if not guild_id or not secret:
+            await interaction.response.send_message("The payment link is not configured yet.", ephemeral=True)
+            return
+        query["guild_id"] = guild_id
+        query["user_id"] = str(interaction.user.id)
+        query["signature"] = hmac.new(secret.encode(), f"{guild_id}:{interaction.user.id}".encode(), hashlib.sha256).hexdigest()
+        checkout_url = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
+        view = discord.ui.View(timeout=300)
+        view.add_item(discord.ui.Button(label="Open checkout", url=checkout_url))
+        await interaction.response.send_message("This private checkout link is connected to your Discord account.", view=view, ephemeral=True)
+
+
 class VcOfferView(discord.ui.View):
     def __init__(self, offers: list[tuple[str, str, str]]) -> None:
         super().__init__(timeout=900)
         icons = {"VC Perms": "🎙️", "Anti-Reject": "🛡️", "Godmode": "♛", "All Access": "🔑"}
         for label, price, url in offers:
             if url.startswith(("https://", "http://")):
-                self.add_item(discord.ui.Button(label=f"{label} · ${price}", emoji=icons.get(label), url=url))
+                if urllib.parse.urlparse(url).path == "/shop":
+                    self.add_item(VcOfferButton(label, price, url, icons.get(label)))
+                else:
+                    self.add_item(discord.ui.Button(label=f"{label} · ${price}", emoji=icons.get(label), url=url))
 
 
 class OwnerRoleConfirmView(discord.ui.View):

@@ -709,6 +709,7 @@ class Dashboard:
         except (AttributeError, TypeError, ValueError):
             return False
 
+
     def _authorizations(self) -> list[dict[str, Any]]:
         with sqlite3.connect(self.oauth_db) as db:
             db.row_factory = sqlite3.Row
@@ -813,7 +814,8 @@ class Dashboard:
         raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
 
     async def oauth_callback(self, request: web.Request) -> web.Response:
-        if not self._oauth_configured() or not self._valid_oauth_state(request.query.get("state", "")):
+        state = request.query.get("state", "")
+        if not self._oauth_configured() or not self._valid_oauth_state(state):
             raise web.HTTPBadRequest(text="Invalid or expired authorization request.")
         code = request.query.get("code")
         if not code:
