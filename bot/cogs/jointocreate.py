@@ -61,7 +61,7 @@ class JtcControlView(discord.ui.View):
             return None
         return channel
 
-    @discord.ui.button(label="Claim", emoji="👑", style=discord.ButtonStyle.primary, custom_id="jtc:claim")
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, custom_id="jtc:claim")
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -74,7 +74,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(interaction.user, manage_channels=True, connect=True, view_channel=True)
         await interaction.response.send_message(f"{interaction.user.mention} now owns this VC.", ephemeral=True)
 
-    @discord.ui.button(label="Rename", emoji="✏️", style=discord.ButtonStyle.secondary, custom_id="jtc:rename")
+    @discord.ui.button(label="Rename", style=discord.ButtonStyle.secondary, custom_id="jtc:rename")
     async def rename(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -84,7 +84,7 @@ class JtcControlView(discord.ui.View):
             return
         await interaction.response.send_modal(JtcRenameModal(self.cog, channel))
 
-    @discord.ui.button(label="Limit", emoji="👥", style=discord.ButtonStyle.secondary, custom_id="jtc:limit")
+    @discord.ui.button(label="Limit", style=discord.ButtonStyle.secondary, custom_id="jtc:limit")
     async def limit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -94,7 +94,7 @@ class JtcControlView(discord.ui.View):
             return
         await interaction.response.send_modal(JtcLimitModal(self.cog, channel))
 
-    @discord.ui.button(label="Lock", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="jtc:lock")
+    @discord.ui.button(label="Lock", style=discord.ButtonStyle.secondary, custom_id="jtc:lock")
     async def lock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -102,7 +102,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=False)
         await interaction.response.send_message("Voice channel locked.", ephemeral=True)
 
-    @discord.ui.button(label="Unlock", emoji="🔓", style=discord.ButtonStyle.success, custom_id="jtc:unlock")
+    @discord.ui.button(label="Unlock", style=discord.ButtonStyle.secondary, custom_id="jtc:unlock")
     async def unlock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -110,7 +110,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=None)
         await interaction.response.send_message("Voice channel unlocked.", ephemeral=True)
 
-    @discord.ui.button(label="Hide", emoji="🙈", style=discord.ButtonStyle.secondary, custom_id="jtc:hide")
+    @discord.ui.button(label="Hide", style=discord.ButtonStyle.secondary, custom_id="jtc:hide")
     async def hide(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -118,7 +118,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, view_channel=False)
         await interaction.response.send_message("Voice channel hidden.", ephemeral=True)
 
-    @discord.ui.button(label="Reveal", emoji="👁️", style=discord.ButtonStyle.secondary, custom_id="jtc:reveal")
+    @discord.ui.button(label="Reveal", style=discord.ButtonStyle.secondary, custom_id="jtc:reveal")
     async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -126,7 +126,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, view_channel=None)
         await interaction.response.send_message("Voice channel revealed.", ephemeral=True)
 
-    @discord.ui.button(label="Boost Bitrate", style=discord.ButtonStyle.primary, custom_id="jtc:boost_bitrate")
+    @discord.ui.button(label="Boost Bitrate", style=discord.ButtonStyle.secondary, custom_id="jtc:boost_bitrate")
     async def boost_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
@@ -135,7 +135,7 @@ class JtcControlView(discord.ui.View):
         await channel.edit(bitrate=int(bitrate), reason=f"Booster VC bitrate by {interaction.user}")
         await interaction.response.send_message("Booster bitrate applied to this VC.", ephemeral=True)
 
-    @discord.ui.button(label="Boost Privacy", style=discord.ButtonStyle.primary, custom_id="jtc:boost_privacy")
+    @discord.ui.button(label="Boost Privacy", style=discord.ButtonStyle.secondary, custom_id="jtc:boost_privacy")
     async def boost_privacy(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
@@ -143,7 +143,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=False, view_channel=True)
         await interaction.response.send_message("Booster privacy turned on. Use Unlock when you want to open it again.", ephemeral=True)
 
-    @discord.ui.button(label="Play Music", style=discord.ButtonStyle.success, custom_id="jtc:play_music")
+    @discord.ui.button(label="Play Music", style=discord.ButtonStyle.secondary, custom_id="jtc:play_music")
     async def play_music(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -220,7 +220,7 @@ class JoinToCreate(commands.Cog):
         return discord.Color(int(cached)) if cached else DEFAULT_COLOR
 
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
-        e = embed("Voice Channel Controls", f"Owner: {owner.mention}\nChannel: {channel.mention}", self.theme_color(channel.guild))
+        e = discord.Embed(title="Voice Channel Controls", description=f"Owner: {owner.mention}\nChannel: {channel.mention}")
         e.add_field(name="Channel", value="Claim · Rename · Limit · Lock · Unlock · Hide · Reveal", inline=False)
         e.add_field(name="Extras", value="Boost Bitrate · Boost Privacy · Play Music", inline=False)
         e.set_footer(text="Only the VC owner or server moderators can use these controls.")
