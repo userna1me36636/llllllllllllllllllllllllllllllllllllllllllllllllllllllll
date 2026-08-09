@@ -667,6 +667,24 @@ class Dashboard:
                 code TEXT NOT NULL, claimed_at INTEGER NOT NULL,
                 PRIMARY KEY(guild_id,user_id,product))""")
 
+    def _ensure_commerce_schema(self) -> None:
+        """Upgrade older Railway databases before any promo or claim request."""
+        with sqlite3.connect(self.oauth_db, timeout=30) as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
+                guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
+                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                product TEXT NOT NULL DEFAULT 'all', PRIMARY KEY(guild_id,code))""")
+            if "product" not in {row[1] for row in db.execute("PRAGMA table_info(promo_codes)")}:
+                db.execute("ALTER TABLE promo_codes ADD COLUMN product TEXT NOT NULL DEFAULT 'all'")
+            db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
+                session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
+                user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS free_claims (
+                guild_id TEXT NOT NULL, user_id TEXT NOT NULL, product TEXT NOT NULL,
+                code TEXT NOT NULL, claimed_at INTEGER NOT NULL,
+                PRIMARY KEY(guild_id,user_id,product))""")
+
     def _oauth_configured(self) -> bool:
         settings = self.bot.settings
         return bool(settings.discord_client_id and settings.discord_client_secret and settings.discord_oauth_redirect_uri and settings.oauth_state_secret)
@@ -969,6 +987,7 @@ class Dashboard:
         return hmac.compare_digest(expected, signature)
 
     async def shop(self, request: web.Request) -> web.Response:
+        self._ensure_commerce_schema()
         guild_id = request.query.get("guild_id", "")
         user_id = request.query.get("user_id", "")
         signature = request.query.get("signature", "")
@@ -1006,7 +1025,8 @@ class Dashboard:
         :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}.price.free{{color:#9fd06f}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.promo-result{{font-weight:700;margin:12px 0 0}}.good{{color:#b9df8b}}.bad{{color:#ff9c80}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button>{promo_status}</form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
         return web.Response(text=page, content_type="text/html")
 
-    async def free_claim(self, request: web.Request) -> web.Response:
+    async def _free_claim(self, request: web.Request) -> web.Response:
+        self._ensure_commerce_schema()
         guild_id = request.query.get("guild_id", "")
         user_id = request.query.get("user_id", "")
         signature = request.query.get("signature", "")
@@ -1040,6 +1060,17 @@ class Dashboard:
         discord_url = f"https://discord.com/channels/{guild.id}"
         page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}. The <b>{html.escape(fulfillment_detail)}</b> role was added automatically.</p><a href="{discord_url}">Back to Discord</a></main>'''
         return web.Response(text=page, content_type="text/html")
+
+    async def free_claim(self, request: web.Request) -> web.Response:
+        try:
+            return await self._free_claim(request)
+        except web.HTTPException:
+            raise
+        except Exception as error:
+            self.bot.log.exception("Free store claim failed")
+            detail = html.escape(f"{type(error).__name__}: {error}")
+            page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim issue</title><style>:root{{color-scheme:dark}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial;display:grid;place-items:center;min-height:100vh}}main{{max-width:620px;border:1px solid #373832;background:#1d1e1b;border-radius:16px;padding:28px}}h1{{margin-top:0}}p{{color:#aaa99f;line-height:1.6}}code{{display:block;overflow-wrap:anywhere;color:#ff9c80}}</style><main><h1>Claim could not finish</h1><p>The bot saved the error instead of showing a blank server page. Fix the item below, then click the claim button again.</p><code>{detail}</code></main>'''
+            return web.Response(text=page, content_type="text/html", status=500)
 
     async def checkout_start(self, request: web.Request) -> web.Response:
         guild_id, user_id = request.query.get("guild_id", ""), request.query.get("user_id", "")
@@ -1133,6 +1164,7 @@ class Dashboard:
         return web.json_response({"payments": rows, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY") and os.getenv("STRIPE_WEBHOOK_SECRET") and os.getenv("PUBLIC_BASE_URL"))})
 
     async def promos(self, request: web.Request) -> web.Response:
+        self._ensure_commerce_schema()
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
         if request.method == "POST":
