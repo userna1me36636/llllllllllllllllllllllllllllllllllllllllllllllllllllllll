@@ -31,54 +31,65 @@ def dashboard_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AinBot Control</title>
   <style>
-    :root { color-scheme: dark; --bg:#07070b; --panel:rgba(255,255,255,.075); --line:rgba(255,255,255,.22); --red:rgba(178,24,44,.42); --text:#f7f2f5; --muted:#d7ccd7; --hot:#ff4f73; --a:#ff3864; --b:#8f5cff; --c:#20d3ff; --d:#42ff9e; }
+    :root { color-scheme:dark; --bg:#111210; --surface:#191a17; --raised:#20211e; --line:#34362f; --text:#f3f1e8; --muted:#aaa99f; --accent:#ff7043; --accent-soft:#35221b; --success:#9fcf63; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; background:linear-gradient(125deg,#09070d,#1b0820,#071827,#10110a,#220811); background-size:520% 520%; color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; animation:auroraShift 28s ease-in-out infinite; position:relative; overflow-x:hidden; }
-    body::before { content:""; position:fixed; inset:-18%; pointer-events:none; background:radial-gradient(circle at 15% 20%, rgba(255,56,100,.42), transparent 28%), radial-gradient(circle at 78% 12%, rgba(143,92,255,.38), transparent 30%), radial-gradient(circle at 88% 72%, rgba(32,211,255,.3), transparent 28%), radial-gradient(circle at 18% 84%, rgba(66,255,158,.2), transparent 30%); filter:blur(20px); opacity:.75; animation:glowDrift 34s ease-in-out infinite alternate; }
-    body::after { content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size:42px 42px; mask-image:linear-gradient(to bottom, rgba(0,0,0,.72), transparent 85%); }
-    @keyframes auroraShift { 0%{background-position:0% 50%;} 33%{background-position:80% 20%;} 66%{background-position:20% 90%;} 100%{background-position:0% 50%;} }
-    @keyframes glowDrift { 0%{transform:translate3d(-2%, -1%, 0) rotate(0deg) scale(1);} 50%{transform:translate3d(2%, 2%, 0) rotate(8deg) scale(1.05);} 100%{transform:translate3d(0, -2%, 0) rotate(-6deg) scale(1.02);} }
-    @keyframes borderPulse { 0%,100%{border-color:rgba(255,255,255,.2); box-shadow:0 20px 80px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.14);} 50%{border-color:rgba(143,92,255,.52); box-shadow:0 20px 90px rgba(32,211,255,.14), inset 0 1px 0 rgba(255,255,255,.22);} }
-    .wrap { width:min(1180px, calc(100% - 28px)); margin:0 auto; padding:28px 0; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-bottom:18px; }
-    h1 { margin:0; font-size:clamp(30px,5vw,58px); letter-spacing:0; }
-    h2 { margin:0 0 12px; font-size:20px; }
-    p { color:var(--muted); line-height:1.5; }
-    .grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; align-items:start; }
-    .panel { border:1px solid var(--line); background:linear-gradient(145deg,rgba(255,56,100,.18),rgba(143,92,255,.13),rgba(32,211,255,.08),rgba(255,255,255,.05)); backdrop-filter:blur(18px) saturate(140%); border-radius:8px; padding:16px; animation:borderPulse 12s ease-in-out infinite; position:relative; z-index:1; }
-    .card { border:1px solid rgba(255,255,255,.16); background:linear-gradient(145deg,rgba(0,0,0,.38),rgba(255,255,255,.06)); border-radius:8px; padding:12px; margin-top:10px; box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
-    label { display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }
-    input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:#171017; color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
-    .select-search { margin:0 0 6px; background:rgba(7,7,11,.72); border-color:rgba(32,211,255,.3); }
-    option { background:#171017; color:#f7f2f5; }
-    option:checked, option:hover { background:#b2182c; color:#fff; }
-    button { border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18),rgba(32,211,255,.13)); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; box-shadow:inset 0 1px 0 rgba(255,255,255,.14); }
-    button:hover { border-color:var(--hot); }
+    html { scroll-behavior:smooth; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:"Segoe UI",Arial,sans-serif; overflow-x:hidden; }
+    body::before { content:""; position:fixed; left:0; top:0; bottom:0; width:5px; background:var(--accent); z-index:20; }
+    .wrap { width:min(1240px,calc(100% - 40px)); margin:0 auto; padding:38px 0 56px; }
+    header { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; margin-bottom:28px; padding-bottom:22px; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:clamp(34px,5vw,62px); line-height:.95; letter-spacing:-.055em; font-weight:760; }
+    h2 { margin:0 0 16px; font-size:18px; letter-spacing:-.015em; }
+    p { color:var(--muted); line-height:1.55; }
+    header p { max-width:600px; margin:10px 0 0; }
+    .brand { color:var(--accent); font-size:11px; margin-top:12px; letter-spacing:.14em; text-transform:uppercase; }
+    .grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px; align-items:start; }
+    .panel { border:1px solid var(--line); background:var(--surface); border-radius:16px; padding:18px; box-shadow:0 18px 50px rgba(0,0,0,.18); }
+    .grid > section.panel { position:sticky; top:18px; }
+    .card { border:1px solid var(--line); background:var(--raised); border-radius:12px; padding:16px; margin-top:12px; }
+    label { display:block; color:var(--muted); font-size:11px; font-weight:650; letter-spacing:.055em; text-transform:uppercase; margin:14px 0 7px; }
+    input,select,textarea { width:100%; border:1px solid var(--line); background:#141512; color:var(--text); border-radius:9px; padding:11px 12px; outline:none; font:inherit; transition:border-color .16s ease,box-shadow .16s ease,background .16s ease; }
+    input:focus,select:focus,textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(255,112,67,.12); background:#181916; }
+    .select-search { margin:0 0 6px; background:#171815; }
+    option { background:#171815; color:var(--text); }
+    button,a.button { border:1px solid var(--line); background:#292a26; color:var(--text); border-radius:9px; padding:10px 13px; cursor:pointer; font-weight:650; transition:transform .14s ease,border-color .14s ease,background .14s ease; }
+    button:hover,a.button:hover { border-color:#686a60; background:#30312c; transform:translateY(-1px); }
+    button:active,a.button:active { transform:translateY(0); }
+    button:focus-visible,a.button:focus-visible { outline:3px solid rgba(255,112,67,.25); outline-offset:2px; }
+    button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
     .row { display:flex; gap:8px; }
-    .row > * { flex:1; }
-    .pill { display:inline-flex; border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:6px 9px; margin:3px; color:#fff; background:linear-gradient(135deg,rgba(255,56,100,.18),rgba(32,211,255,.12)); font-size:12px; }
-    .cmd { display:grid; grid-template-columns: minmax(130px, 220px) 1fr; gap:10px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,.11); }
+    .row > * { flex:1; min-width:0; }
+    .pill { display:inline-flex; border:1px solid #554037; border-radius:999px; padding:6px 10px; margin:3px; color:#ffd8ca; background:var(--accent-soft); font-size:12px; }
+    .cmd { display:grid; grid-template-columns:minmax(130px,220px) 1fr; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
     .cmd:last-child { border-bottom:0; }
-    .cmd b { color:#fff; }
+    .cmd b { color:var(--text); }
     .cmd span { color:var(--muted); }
-    .status { min-height:22px; color:#ffd0dc; font-size:13px; }
-    .brand { color:#ffd8e2; font-size:13px; margin-top:6px; }
-    .stats { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-top:10px; }
-    .stat { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:10px; background:rgba(255,255,255,.06); }
-    .stat b { display:block; font-size:22px; }
-    .stat span { color:var(--muted); font-size:12px; }
-    textarea { width:100%; min-height:92px; resize:vertical; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:11px 12px; outline:none; font:inherit; }
+    .status { min-height:22px; color:var(--success); font-size:13px; }
+    .stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
+    .stat { border:1px solid var(--line); border-radius:10px; padding:13px; background:#181916; }
+    .stat b { display:block; font-size:24px; letter-spacing:-.04em; }
+    .stat span { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+    textarea { min-height:92px; resize:vertical; }
     .wide { grid-column:1 / -1; }
-    .tabs { display:flex; gap:7px; overflow-x:auto; padding:2px 0 12px; margin-bottom:4px; scrollbar-width:thin; }
-    .tab-button { white-space:nowrap; background:rgba(255,255,255,.055); color:var(--muted); }
-    .tab-button.active { color:#fff; border-color:var(--hot); background:linear-gradient(135deg,rgba(255,56,100,.38),rgba(143,92,255,.28)); }
+    .tabs { display:flex; gap:4px; overflow-x:auto; padding:0 0 14px; margin-bottom:2px; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+    .tab-button { white-space:nowrap; background:transparent; color:var(--muted); border-color:transparent; border-radius:7px; }
+    .tab-button:hover { transform:none; background:#252621; }
+    .tab-button.active { color:var(--text); border-color:#684032; background:var(--accent-soft); }
     .tab-panel { display:none; }
-    .tab-panel.active { display:block; }
-    .notice { border-left:3px solid var(--c); padding:10px 12px; background:rgba(32,211,255,.08); color:var(--muted); }
+    .tab-panel.active { display:block; animation:panelIn .2s ease-out; }
+    @keyframes panelIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+    .notice { border-left:3px solid var(--accent); border-radius:4px; padding:10px 12px; background:var(--accent-soft); color:#d6c1b8; }
+    .guide-list { display:grid; gap:9px; margin:12px 0 0; padding:0; list-style:none; counter-reset:guide; }
+    .guide-list li { position:relative; padding:12px 12px 12px 46px; border:1px solid var(--line); border-radius:10px; background:#181916; color:var(--muted); line-height:1.5; }
+    .guide-list li::before { counter-increment:guide; content:counter(guide); position:absolute; left:12px; top:11px; width:24px; height:24px; display:grid; place-items:center; border-radius:7px; background:var(--accent-soft); color:var(--accent); font-weight:750; }
+    .guide-list b { color:var(--text); }
+    .defense-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .defense-grid .card { margin:0; }
     .metric { font-size:34px; font-weight:750; display:block; }
-    a.button { display:inline-block; text-decoration:none; text-align:center; border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18)); color:#fff; border-radius:8px; padding:10px 12px; }
-    @media (prefers-reduced-motion: reduce) { body, body::before, .panel { animation:none; } }
-    @media (max-width: 820px) { .grid { grid-template-columns:1fr; } header { display:block; } }
+    a.button { display:inline-block; text-decoration:none; text-align:center; }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation:none!important; transition:none!important; } }
+    @media (max-width:840px) { .wrap{width:min(100% - 22px,1240px);padding-top:22px}.grid{grid-template-columns:1fr}.grid > section.panel{position:static}header{align-items:flex-start} }
+    @media (max-width:560px) { header{display:block}header>button{margin-top:16px}.row{flex-direction:column}.cmd{grid-template-columns:1fr}.defense-grid{grid-template-columns:1fr}.panel{padding:14px;border-radius:13px} }
   </style>
 </head>
 <body>
@@ -221,6 +232,39 @@ def dashboard_html() -> str:
           <input id="inviteUrl" readonly placeholder="Invite link appears here">
           <div id="transferResult"></div>
         </div>
+        <div class="card" id="commandCatalogCard">
+          <h2>All Commands</h2>
+          <p>Every slash and prefix command currently loaded by the bot. Search by command name, feature, or a word from its description.</p>
+          <div class="row"><input id="commandCatalogSearch" type="search" placeholder="Search commands, such as tickets, music, lock, roles…" oninput="filterCommandCatalog()"><button onclick="loadCommandCatalog()">Refresh List</button></div>
+          <div class="stats"><div class="stat"><b id="commandCatalogCount">0</b><span>matching commands</span></div><div class="stat"><b id="commandCatalogTotal">0</b><span>total commands</span></div></div>
+          <div id="commandCatalogResults"></div>
+        </div>
+        <div class="card" id="defenseCenterCard">
+          <h2>Defense Center</h2>
+          <p class="notice">Start here before inviting the public. The bot needs Manage Channels, Manage Roles, Moderate Members, Kick Members, Ban Members, View Audit Log, and Manage Webhooks for complete protection.</p>
+          <div class="defense-grid">
+            <div class="card"><h2>Anti-Nuke</h2><p>Detects destructive channel, role, ban, kick, webhook, and permission activity. Configure trusted owners and whitelist only staff or roles you fully trust.</p><span class="pill">/antinuke configure</span><span class="pill">/antinuke whitelist</span></div>
+            <div class="card"><h2>AutoMod</h2><p>Controls spam, links, invites, mass mentions, caps, and prohibited content before it becomes a raid problem.</p><span class="pill">/automod configure</span><span class="pill">/automod links</span><span class="pill">/automod invites</span></div>
+            <div class="card"><h2>Emergency Lock</h2><p>Use the single-channel lock for a local issue or lock every text channel during an active raid. Unlock when the threat is cleared.</p><span class="pill">/lock</span><span class="pill">!lock all</span><span class="pill">!unlock all</span></div>
+            <div class="card"><h2>Protected Staff</h2><p>God Mode prevents protected owners, users, and roles from being targeted by ordinary moderation actions.</p><span class="pill">/godmode add</span><span class="pill">/godmode remove</span></div>
+            <div class="card"><h2>Logs & Evidence</h2><p>Send moderation, member, role, channel, and security events to private staff channels. Keep View Audit Log enabled.</p><span class="pill">/config panel</span><span class="pill">Logs tab</span></div>
+            <div class="card"><h2>Recovery</h2><p>Create server backup codes before major changes. Store codes privately and test your recovery process before an emergency.</p><span class="pill">/backup create</span><span class="pill">Security tab</span></div>
+          </div>
+        </div>
+        <div class="card" id="setupGuideCard">
+          <h2>Bot Setup Guide</h2>
+          <p>Complete these steps in order for commands, moderation, member transfer, voice, and the dashboard to work correctly.</p>
+          <ol class="guide-list">
+            <li><b>Discord application:</b> create the bot in the Developer Portal and enable Server Members Intent and Message Content Intent.</li>
+            <li><b>Invite scopes:</b> invite it with <code>bot</code> and <code>applications.commands</code>. Place the bot role above every role it needs to manage.</li>
+            <li><b>Core permissions:</b> enable Manage Channels, Manage Roles, Manage Messages, Moderate Members, Kick, Ban, View Audit Log, Manage Webhooks, Connect, Speak, and Create Invite as needed.</li>
+            <li><b>Required environment:</b> set <code>DISCORD_TOKEN</code>, <code>DASHBOARD_TOKEN</code>, <code>OWNER_IDS</code>, and <code>AUTO_SYNC_COMMANDS=true</code>.</li>
+            <li><b>Member Transfer:</b> add the exact OAuth callback in Discord, then set <code>DISCORD_CLIENT_ID</code>, <code>DISCORD_CLIENT_SECRET</code>, <code>DISCORD_OAUTH_REDIRECT_URI</code>, and <code>OAUTH_STATE_SECRET</code>.</li>
+            <li><b>Initial server setup:</b> run <code>/config panel</code>, choose log channels, configure AutoMod and Anti-Nuke, add trusted owners, and create a backup.</li>
+            <li><b>Optional features:</b> add OpenAI, Spotify, weather, translation, YouTube cookie, FFmpeg, and Opus settings only for the features you plan to use.</li>
+            <li><b>Final test:</b> run <code>/doctor</code>, confirm slash commands synced, test a private lock/unlock channel, verify logs, then test music and voice.</li>
+          </ol>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -294,6 +338,22 @@ async function createRole(){ await api('/api/guild/' + guild() + '/role/create',
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
 async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
+let commandCatalog=[];
+async function loadCommandCatalog(){
+  if(!guild()) return;
+  try {
+    const data=await api('/api/guild/' + guild() + '/commands');
+    commandCatalog=data.commands;
+    $('commandCatalogTotal').textContent=commandCatalog.length;
+    filterCommandCatalog();
+  } catch(e){ setStatus(e.message); }
+}
+function filterCommandCatalog(){
+  const query=($('commandCatalogSearch')?.value || '').trim().toLowerCase();
+  const matches=commandCatalog.filter(command=>(command.name+' '+(command.description||'')).toLowerCase().includes(query));
+  $('commandCatalogCount').textContent=matches.length;
+  $('commandCatalogResults').innerHTML=matches.map(command=>`<div class="cmd"><b>${command.name}</b><span>${command.description || 'Runs this bot feature. Use the command in Discord to see its available options.'}</span></div>`).join('') || '<p>No commands match that search.</p>';
+}
 async function loadTransferStatus(){
   if(!$('transferSource').value || !$('transferDestination').value) return;
   try {
@@ -323,13 +383,13 @@ async function copyAuthorizationLink(){ await navigator.clipboard.writeText(loca
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['server','Server Control'], ['ai','AI & Commands'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
   const panels = {};
   definitions.forEach(([id,label], index)=>{
-    const button = document.createElement('button'); button.className='tab-button' + (index===0?' active':''); button.textContent=label; button.type='button'; button.onclick=()=>showTab(id); nav.appendChild(button);
+    const button = document.createElement('button'); button.className='tab-button' + (index===0?' active':''); button.textContent=label; button.dataset.tab=id; button.type='button'; button.onclick=()=>showTab(id); nav.appendChild(button);
     const panel = document.createElement('section'); panel.className='tab-panel' + (index===0?' active':''); panel.dataset.tab=id; panels[id]=panel;
   });
   const children = [...main.children]; main.prepend(nav); definitions.forEach(([id])=>main.appendChild(panels[id]));
@@ -343,6 +403,9 @@ function setupTabs(){
     if(title.includes('security')) tab='security';
     if(title.includes('economy')) tab='economy';
     if(title.includes('member transfer')) tab='members';
+    if(title.includes('all commands')) tab='commands';
+    if(title.includes('defense center')) tab='defense';
+    if(title.includes('bot setup guide')) tab='setup';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -355,7 +418,8 @@ function setupTabs(){
 }
 function showTab(id){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.dataset.tab===id));
-  document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.textContent===({overview:'Overview',server:'Server Control',ai:'AI & Commands',voice:'Voice & Chat',music:'Music',security:'Security',economy:'Economy & Roles',members:'Members',logs:'Logs'})[id]));
+  document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
+  if(id==='commands' && !commandCatalog.length) loadCommandCatalog();
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){

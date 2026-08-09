@@ -38,6 +38,20 @@ class Moderation(commands.Cog):
     async def save_foreverbans(self, guild_id: int, foreverbans: dict[str, dict[str, str | int]]) -> None:
         await self.bot.db.set_settings_value(guild_id, "foreverbans", foreverbans, self.bot.settings.default_prefix)
 
+    async def set_all_channel_locks(self, guild: discord.Guild, locked: bool, reason: str) -> tuple[int, int]:
+        changed = 0
+        skipped = 0
+        for channel in guild.text_channels:
+            if guild.me is None or not channel.permissions_for(guild.me).manage_channels:
+                skipped += 1
+                continue
+            try:
+                await channel.set_permissions(guild.default_role, send_messages=False if locked else None, reason=reason)
+                changed += 1
+            except (discord.Forbidden, discord.HTTPException):
+                skipped += 1
+        return changed, skipped
+
     @commands.hybrid_command(name="ban")
     @has_guild_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided") -> None:
@@ -200,15 +214,35 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="lock")
     @has_guild_permissions(manage_channels=True)
-    async def lock(self, ctx: commands.Context) -> None:
-        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
-        await ctx.reply("Channel locked.", mention_author=False)
+    @app_commands.describe(target="Use channel for this channel or all for every text channel")
+    @app_commands.choices(target=[
+        app_commands.Choice(name="This channel", value="channel"),
+        app_commands.Choice(name="All channels", value="all"),
+    ])
+    async def lock(self, ctx: commands.Context, target: str = "channel") -> None:
+        target = target.lower().strip()
+        if target in {"all", "server", "every"}:
+            changed, skipped = await self.set_all_channel_locks(ctx.guild, True, f"Lock all by {ctx.author}")
+            await ctx.reply(f"Locked `{changed}` text channels. Skipped `{skipped}` channels I could not manage.", mention_author=False)
+            return
+        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False, reason=f"Channel lock by {ctx.author}")
+        await ctx.reply("This channel is locked.", mention_author=False)
 
     @commands.hybrid_command(name="unlock")
     @has_guild_permissions(manage_channels=True)
-    async def unlock(self, ctx: commands.Context) -> None:
-        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=None)
-        await ctx.reply("Channel unlocked.", mention_author=False)
+    @app_commands.describe(target="Use channel for this channel or all for every text channel")
+    @app_commands.choices(target=[
+        app_commands.Choice(name="This channel", value="channel"),
+        app_commands.Choice(name="All channels", value="all"),
+    ])
+    async def unlock(self, ctx: commands.Context, target: str = "channel") -> None:
+        target = target.lower().strip()
+        if target in {"all", "server", "every"}:
+            changed, skipped = await self.set_all_channel_locks(ctx.guild, False, f"Unlock all by {ctx.author}")
+            await ctx.reply(f"Unlocked `{changed}` text channels. Skipped `{skipped}` channels I could not manage.", mention_author=False)
+            return
+        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=None, reason=f"Channel unlock by {ctx.author}")
+        await ctx.reply("This channel is unlocked.", mention_author=False)
 
     @mod.command(name="ban", description="Ban a member")
     @app_commands.default_permissions(ban_members=True)
