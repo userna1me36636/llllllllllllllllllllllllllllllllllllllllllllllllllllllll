@@ -494,7 +494,7 @@ async function copyAuthorizationLink(){ await navigator.clipboard.writeText(loca
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['growth','Promos & Giveaways'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -518,7 +518,9 @@ function setupTabs(){
     if(title.includes('defense center')) tab='defense';
     if(title.includes('bot setup guide')) tab='setup';
     if(title.includes('payment logs')) tab='payments';
-    if(title.includes('promo')||title.includes('random giveaway')||title.includes('live channels')) tab='growth';
+    if(title.includes('promo codes')) tab='promos';
+    if(title.includes('random giveaway')) tab='giveaways';
+    if(title.includes('live channels')) tab='live';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -534,7 +536,8 @@ function showTab(id){
   document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
   if(id==='commands' && !commandCatalog.length) loadCommandCatalog();
   if(id==='payments') loadPaymentLogs();
-  if(id==='growth'){ loadPromos(); loadGiveawayConfig(); }
+  if(id==='promos') loadPromos();
+  if(id==='giveaways') loadGiveawayConfig();
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){
