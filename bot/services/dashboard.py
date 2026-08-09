@@ -607,9 +607,13 @@ class Dashboard:
             return False, "Move the bot role above the access roles and give it Manage Roles."
         except discord.HTTPException:
             return False, "Discord could not create or assign the access role."
-        fulfilled, fulfillment_detail = await self.fulfill_access(str(guild.id), user_id, product)
-        if not fulfilled:
-            raise web.HTTPServiceUnavailable(text=f"The claim was saved, but Discord could not add the role: {fulfillment_detail} You can retry this claim after fixing the bot role.")
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
+        for key in keys:
+            ids = list(settings.get(key, []))
+            if member.id not in ids:
+                ids.append(member.id)
+                await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
         return True, role.name
 
     def _load_owner_ids(self) -> None:
@@ -1049,13 +1053,9 @@ class Dashboard:
                 claim_id = f"free:{guild.id}:{user_id}:{product}:{promo}"
                 db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (claim_id, str(guild.id), promo, user_id, int(time.time())))
                 db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(guild.id), promo))
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
-        for key in keys:
-            ids = list(settings.get(key, []))
-            if member.id not in ids:
-                ids.append(member.id)
-                await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
+        fulfilled, fulfillment_detail = await self.fulfill_access(str(guild.id), user_id, product)
+        if not fulfilled:
+            raise web.HTTPServiceUnavailable(text=f"The claim was saved, but Discord could not add the role: {fulfillment_detail} You can retry after fixing the bot role.")
         product_name = {"vc_perms":"VC Perms", "anti_reject":"Anti-Reject", "godmode":"Godmode", "all":"All Access"}[product]
         discord_url = f"https://discord.com/channels/{guild.id}"
         page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}. The <b>{html.escape(fulfillment_detail)}</b> role was added automatically.</p><a href="{discord_url}">Back to Discord</a></main>'''
