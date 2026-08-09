@@ -313,7 +313,7 @@ class JoinToCreate(commands.Cog):
                     self.owners.pop(int(channel_id), None)
                     changed = True
                     continue
-                if isinstance(channel, discord.VoiceChannel) and not channel.members:
+                if isinstance(channel, discord.VoiceChannel) and not any(not member.bot for member in channel.members):
                     temp_channels.pop(channel_id, None)
                     self.owners.pop(channel.id, None)
                     changed = True
@@ -473,7 +473,7 @@ class JoinToCreate(commands.Cog):
                         pass
                 finally:
                     self.creating_for.discard(member.id)
-        if before.channel and not before.channel.members:
+        if before.channel and not any(not voice_member.bot for voice_member in before.channel.members):
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             temp_channels = settings.get("jtc_temp_channels", {})
             is_temp_channel = before.channel.id in self.owners or str(before.channel.id) in temp_channels
