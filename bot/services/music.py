@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import shutil
 import tempfile
@@ -26,15 +27,28 @@ def ytdl_options() -> dict:
         "default_search": os.getenv("YTDLP_SEARCH_PROVIDER", "ytsearch"),
         "extract_flat": False,
         "js_runtimes": {"deno": {}},
-        "extractor_args": {"youtube": {"player_client": ["default", "ios"]}},
     }
-    cookie_file = os.getenv("YTDLP_COOKIES_FILE")
-    cookie_text = os.getenv("YTDLP_COOKIES_TEXT")
-    if cookie_file:
+    cookie_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+    cookie_text = os.getenv("YTDLP_COOKIES_TEXT", "").strip()
+    cookie_base64 = os.getenv("YTDLP_COOKIES_BASE64", "").strip()
+    if cookie_file and Path(cookie_file).is_file():
         opts["cookiefile"] = cookie_file
-    elif cookie_text:
+    elif cookie_base64 or cookie_text:
         path = Path(tempfile.gettempdir()) / "yt-dlp-cookies.txt"
-        path.write_text(cookie_text.replace("\\n", "\n"), encoding="utf-8")
+        if cookie_base64:
+            try:
+                contents = base64.b64decode(cookie_base64, validate=True).decode("utf-8-sig")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise RuntimeError("YTDLP_COOKIES_BASE64 is not valid base64-encoded UTF-8 cookies.txt data.") from exc
+        else:
+            contents = cookie_text.strip('"\'').replace("\\r\\n", "\n").replace("\\n", "\n")
+        if "# Netscape HTTP Cookie File" not in contents and not contents.lstrip().startswith("# HTTP Cookie File"):
+            raise RuntimeError("YouTube cookies must use Netscape cookies.txt format.")
+        path.write_text(contents.replace("\r\n", "\n"), encoding="utf-8")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
         opts["cookiefile"] = str(path)
     return opts
 
@@ -138,7 +152,7 @@ class GuildPlayer:
         before_options = FFMPEG_OPTS["before_options"]
         if mode >= 2:
             before_options = "-nostdin"
-        source_url = track.local_path if mode >= 3 and track.local_path else track.url
+        source_url = track.local_path if track.local_path else track.url
         if track.local_path:
             before_options = "-nostdin"
         if mode == 0:

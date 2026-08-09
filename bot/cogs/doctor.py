@@ -51,7 +51,7 @@ class Doctor(commands.Cog):
         prefix = settings.get("prefix", self.bot.settings.default_prefix)
         ffmpeg_path = os.getenv("FFMPEG_PATH", "").strip() or shutil.which("ffmpeg")
         opus_path = os.getenv("OPUS_PATH", "").strip()
-        cookies_configured = self.env_ok("YTDLP_COOKIES_TEXT") or self.env_ok("YTDLP_COOKIES_FILE")
+        cookies_configured = self.env_ok("YTDLP_COOKIES_BASE64") or self.env_ok("YTDLP_COOKIES_TEXT") or self.env_ok("YTDLP_COOKIES_FILE")
         spotify_id = self.env_ok("SPOTIFY_CLIENT_ID")
         spotify_secret = self.env_ok("SPOTIFY_CLIENT_SECRET")
         owner_ids = getattr(self.bot.settings, "owner_ids", set())

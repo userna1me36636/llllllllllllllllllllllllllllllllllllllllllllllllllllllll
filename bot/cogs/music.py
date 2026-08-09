@@ -138,6 +138,19 @@ class Music(commands.Cog):
 
     music = app_commands.Group(name="music", description="Music playback")
 
+    @staticmethod
+    def youtube_login_required(error: Exception) -> bool:
+        text = str(error).lower()
+        return any(marker in text for marker in ("sign in to confirm", "not a bot", "cookies-from-browser", "use --cookies", "login required"))
+
+    def playback_error_embed(self, error: Exception) -> discord.Embed:
+        if self.youtube_login_required(error):
+            return embed(
+                "YouTube Login Required",
+                "YouTube blocked playback from this server. Add a Netscape-format cookies.txt export to Railway as `YTDLP_COOKIES_BASE64`, redeploy, then run `/doctor`. Do not post cookies in Discord.",
+            )
+        return embed("Playback Error", "This track could not be played after the stream and local-audio fallback were tried. Try another source or run `/music doctor`.")
+
     async def ensure_voice(self, interaction: discord.Interaction) -> discord.VoiceClient | None:
         member = interaction.user
         if not isinstance(member, discord.Member) or not member.voice or not member.voice.channel:
@@ -276,28 +289,33 @@ class Music(commands.Cog):
         attempt = self.playback_attempts.get(guild.id, 0)
 
         async def report_after_error(error: Exception) -> None:
+            self.bot.log.warning("Music playback failed in guild %s: %s: %s", guild.id, type(error).__name__, error)
             try:
-                await channel.send(embed=embed("Playback Error", f"`{type(error).__name__}`: {str(error)[:300]}"))
+                await channel.send(embed=self.playback_error_embed(error))
             except discord.HTTPException:
                 pass
 
         async def retry_or_continue(error: Exception) -> None:
             attempt_now = self.playback_attempts.get(guild.id, 0)
-            if attempt_now < 3:
+            if self.youtube_login_required(error):
+                self.playback_attempts[guild.id] = 0
+                await report_after_error(error)
+                await self.play_next(guild, channel)
+                return
+            if attempt_now < 2:
                 self.playback_attempts[guild.id] = attempt_now + 1
-                try:
-                    if attempt_now + 1 == 3 and not track.local_path:
-                        await channel.send(embed=embed("Music Retry", f"Stream playback failed. Downloading `{track.title[:120]}` to temp audio and trying one last time."))
+                if attempt_now + 1 == 2 and not track.local_path:
+                    try:
+                        await channel.send(embed=embed("Music Fallback", f"The direct stream failed. Trying one local-audio fallback for `{track.title[:120]}`."))
+                    except discord.HTTPException:
+                        pass
+                    try:
                         await player.download_track(track)
-                    else:
-                        await channel.send(embed=embed("Music Retry", f"FFmpeg crashed, retrying `{track.title[:120]}` with backup mode `{attempt_now + 2}/4`."))
-                except discord.HTTPException:
-                    pass
-                except Exception as download_error:
-                    self.playback_attempts[guild.id] = 0
-                    await report_after_error(download_error)
-                    await self.play_next(guild, channel)
-                    return
+                    except Exception as download_error:
+                        self.playback_attempts[guild.id] = 0
+                        await report_after_error(download_error)
+                        await self.play_next(guild, channel)
+                        return
                 await self.start_track(guild, channel, track)
                 return
             self.playback_attempts[guild.id] = 0
