@@ -737,7 +737,11 @@ class Dashboard:
             raise web.HTTPForbidden(text=json.dumps({"error": "Bot role is not high enough to manage that role."}), content_type="application/json")
 
     async def index(self, _: web.Request) -> web.Response:
-        return web.Response(text=dashboard_html(), content_type="text/html")
+        return web.Response(
+            text=dashboard_html(),
+            content_type="text/html",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
+        )
 
     async def oauth_start(self, _: web.Request) -> web.Response:
         if not self._oauth_configured():
