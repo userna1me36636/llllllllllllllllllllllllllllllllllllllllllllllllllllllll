@@ -12,6 +12,14 @@ from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_duration, pulse_line, style_embed, theme_color_from_data
 
 
+class VcOfferView(discord.ui.View):
+    def __init__(self, offers: list[tuple[str, str, str]]) -> None:
+        super().__init__(timeout=None)
+        for label, price, url in offers:
+            if url.startswith(("https://", "http://")):
+                self.add_item(discord.ui.Button(label=f"{label} · ${price}", url=url))
+
+
 class OwnerRoleConfirmView(discord.ui.View):
     def __init__(self, cog: "CommandMenu", action: str, role: discord.Role, target_role: discord.Role | None = None) -> None:
         super().__init__(timeout=60)
@@ -87,6 +95,31 @@ class CommandMenu(commands.Cog):
             "deafen_members",
             "move_members",
         )
+
+    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> None:
+        settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
+        offer = settings.get("vc_reject_offer", {})
+        if not offer.get("enabled", True):
+            return
+        defaults = {
+            "title": "Voice Access Options",
+            "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
+            "vc_perms_price": "15", "anti_reject_price": "20", "godmode_price": "30", "all_price": "45",
+        }
+        data = {**defaults, **offer}
+        offers = [
+            ("VC Perms", str(data["vc_perms_price"]), str(data.get("vc_perms_url", ""))),
+            ("Anti-Reject", str(data["anti_reject_price"]), str(data.get("anti_reject_url", ""))),
+            ("Godmode", str(data["godmode_price"]), str(data.get("godmode_url", ""))),
+            ("All Access", str(data["all_price"]), str(data.get("all_url", ""))),
+        ]
+        view = VcOfferView(offers)
+        message = embed(str(data["title"])[:256], f"{str(data['message'])[:3000]}\n\nServer: **{member.guild.name}**\nVoice channel: **{channel.name}**")
+        message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
+        try:
+            await member.send(embed=message, view=view if view.children else None)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
 
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
     channel = app_commands.Group(name="channel", description="Channel tools")
@@ -1083,9 +1116,14 @@ class CommandMenu(commands.Cog):
     async def vc_reject(self, interaction: discord.Interaction, member: discord.Member) -> None:
         channel = self.owned_channel(interaction.user)
         if channel:
+            settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+            if member.id in settings.get("vc_godmode", []):
+                await interaction.response.send_message(f"{member.mention} has VC God Mode and cannot be rejected.", ephemeral=True)
+                return
             await channel.set_permissions(member, connect=False)
             if member.voice and member.voice.channel == channel:
                 await member.move_to(None)
+            await self.send_vc_reject_offer(member, channel)
         await interaction.response.send_message(f"Rejected {member.mention}.", ephemeral=True)
 
     @vc.command(name="transfer", description="Transfer your temporary voice channel ownership")

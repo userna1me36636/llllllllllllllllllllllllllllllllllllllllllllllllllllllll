@@ -148,6 +148,18 @@ def dashboard_html() -> str:
           <button onclick="speakVoice()">Speak In VC</button>
         </div>
         <div class="card">
+          <h2>VC Reject DM</h2>
+          <p>When <code>/vc reject</code> removes someone, the bot sends this offer to their DMs. Buttons open the links you set.</p>
+          <label>Send the DM</label><select id="vcOfferEnabled"><option value="true">On</option><option value="false">Off</option></select>
+          <label>DM title</label><input id="vcOfferTitle" maxlength="256" placeholder="Voice Access Options">
+          <label>DM message</label><textarea id="vcOfferMessage" maxlength="3000" placeholder="Explain the access options…"></textarea>
+          <div class="row"><div><label>VC Perms price</label><input id="vcPermsPrice" type="number" min="0" step="0.01" value="15"></div><div><label>VC Perms link</label><input id="vcPermsUrl" type="url" placeholder="https://..."></div></div>
+          <div class="row"><div><label>Anti-Reject price</label><input id="antiRejectPrice" type="number" min="0" step="0.01" value="20"></div><div><label>Anti-Reject link</label><input id="antiRejectUrl" type="url" placeholder="https://..."></div></div>
+          <div class="row"><div><label>Godmode price</label><input id="godmodePrice" type="number" min="0" step="0.01" value="30"></div><div><label>Godmode link</label><input id="godmodeUrl" type="url" placeholder="https://..."></div></div>
+          <div class="row"><div><label>All Access price</label><input id="allAccessPrice" type="number" min="0" step="0.01" value="45"></div><div><label>All Access link</label><input id="allAccessUrl" type="url" placeholder="https://..."></div></div>
+          <button onclick="saveVcOffer()">Save VC Reject DM</button>
+        </div>
+        <div class="card">
           <h2>Bot Chat</h2>
           <label>Text channel</label>
           <select id="textChannels"></select>
@@ -324,6 +336,7 @@ async function loadSummary(){
   $('members').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('roles').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  await loadVcOffer();
 }
 function renderCommands(commands){
   $('results').innerHTML = commands.map(c=>`<div class="cmd"><b>${c.name}</b><span>${c.description || 'No description'}</span></div>`).join('') || '<p>No commands found.</p>';
@@ -339,6 +352,26 @@ async function leaveVoice(){ await api('/api/guild/' + guild() + '/voice/leave',
 async function speakVoice(){ await api('/api/guild/' + guild() + '/voice/speak', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({text:$('ttsText').value, voice:$('ttsVoice').value, channel_id:$('voiceChannels').value})}); setStatus('Bot is speaking in VC.'); $('ttsText').value=''; }
 async function sendBotMessage(){ await api('/api/guild/' + guild() + '/message', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, message:$('botMessage').value})}); setStatus('Message sent as bot.'); $('botMessage').value=''; }
 async function sendEmbed(){ await api('/api/guild/' + guild() + '/embed', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, title:$('embedTitle').value, message:$('embedText').value})}); setStatus('Embed sent.'); }
+async function loadVcOffer(){
+  if(!guild()) return;
+  try {
+    const data=await api('/api/guild/' + guild() + '/vc-offer'); const offer=data.offer;
+    $('vcOfferEnabled').value=String(offer.enabled); $('vcOfferTitle').value=offer.title; $('vcOfferMessage').value=offer.message;
+    $('vcPermsPrice').value=offer.vc_perms_price; $('vcPermsUrl').value=offer.vc_perms_url;
+    $('antiRejectPrice').value=offer.anti_reject_price; $('antiRejectUrl').value=offer.anti_reject_url;
+    $('godmodePrice').value=offer.godmode_price; $('godmodeUrl').value=offer.godmode_url;
+    $('allAccessPrice').value=offer.all_price; $('allAccessUrl').value=offer.all_url;
+  } catch(e){ setStatus(e.message); }
+}
+async function saveVcOffer(){
+  const body={enabled:$('vcOfferEnabled').value==='true',title:$('vcOfferTitle').value,message:$('vcOfferMessage').value,
+    vc_perms_price:$('vcPermsPrice').value,vc_perms_url:$('vcPermsUrl').value,
+    anti_reject_price:$('antiRejectPrice').value,anti_reject_url:$('antiRejectUrl').value,
+    godmode_price:$('godmodePrice').value,godmode_url:$('godmodeUrl').value,
+    all_price:$('allAccessPrice').value,all_url:$('allAccessUrl').value};
+  try { await api('/api/guild/' + guild() + '/vc-offer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}); setStatus('VC reject DM saved.'); }
+  catch(e){ setStatus(e.message); }
+}
 async function roleAction(action){ await api('/api/guild/' + guild() + '/member/role', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, role_id:$('roles').value, action})}); setStatus('Role updated.'); }
 async function timeoutMember(){ await api('/api/guild/' + guild() + '/member/timeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, minutes:10})}); setStatus('Member timed out for 10 minutes.'); }
 async function untimeoutMember(){ await api('/api/guild/' + guild() + '/member/untimeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Timeout removed.'); }
@@ -438,7 +471,7 @@ function setupTabs(){
     let tab='overview';
     if(title.includes('ask') || title.includes('assistant') || node.id==='results') tab='ai';
     if(title.includes('server control')) tab='server';
-    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement')) tab='voice';
+    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement') || title.includes('vc reject')) tab='voice';
     if(title.includes('music')) tab='music';
     if(title.includes('security')) tab='security';
     if(title.includes('economy')) tab='economy';
@@ -452,7 +485,7 @@ function setupTabs(){
   document.querySelectorAll('.grid > section.panel > .card:not([data-stay])').forEach(node=>{
     const title=(node.querySelector('h2')?.textContent || '').toLowerCase();
     let tab='overview';
-    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement')) tab='voice';
+    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement') || title.includes('vc reject')) tab='voice';
     panels[tab].appendChild(node);
   });
 }
@@ -784,6 +817,45 @@ class Dashboard:
         self.bot.settings.owner_ids.discard(int(raw_id))
         self._save_owner_ids()
         return web.json_response({"ok": True})
+
+    async def vc_offer_get(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        defaults = {
+            "enabled": True,
+            "title": "Voice Access Options",
+            "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
+            "vc_perms_price": "15", "anti_reject_price": "20", "godmode_price": "30", "all_price": "45",
+            "vc_perms_url": "", "anti_reject_url": "", "godmode_url": "", "all_url": "",
+        }
+        return web.json_response({"offer": {**defaults, **settings.get("vc_reject_offer", {})}})
+
+    async def vc_offer_save(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        offer = {
+            "enabled": bool(body.get("enabled", True)),
+            "title": str(body.get("title", "Voice Access Options")).strip()[:256],
+            "message": str(body.get("message", "")).strip()[:3000],
+        }
+        for key in ("vc_perms", "anti_reject", "godmode", "all"):
+            price = str(body.get(f"{key}_price", "")).strip()
+            try:
+                numeric_price = float(price)
+                if numeric_price < 0 or numeric_price > 100000:
+                    raise ValueError
+            except ValueError:
+                raise web.HTTPBadRequest(text=json.dumps({"error": f"Enter a valid {key.replace('_', ' ')} price."}), content_type="application/json")
+            offer[f"{key}_price"] = f"{numeric_price:g}"
+            url = str(body.get(f"{key}_url", "")).strip()
+            parsed = urllib.parse.urlparse(url) if url else None
+            if url and (parsed.scheme not in {"https", "http"} or not parsed.netloc):
+                raise web.HTTPBadRequest(text=json.dumps({"error": f"Enter a valid http(s) link for {key.replace('_', ' ')}."}), content_type="application/json")
+            offer[f"{key}_url"] = url
+        await self.bot.db.set_settings_value(guild.id, "vc_reject_offer", offer, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "offer": offer})
 
     async def summary(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1335,6 +1407,8 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/api/owner-ids", dashboard.owner_ids)
     app.router.add_post("/api/owner-ids/add", dashboard.add_owner_id)
     app.router.add_post("/api/owner-ids/remove", dashboard.remove_owner_id)
+    app.router.add_get("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_get)
+    app.router.add_post("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_save)
     app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
     app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
     app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)
