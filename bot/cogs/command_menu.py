@@ -19,9 +19,10 @@ from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_durati
 class VcOfferView(discord.ui.View):
     def __init__(self, offers: list[tuple[str, str, str]]) -> None:
         super().__init__(timeout=900)
+        icons = {"VC Perms": "🎙️", "Anti-Reject": "🛡️", "Godmode": "♛", "All Access": "🔑"}
         for label, price, url in offers:
             if url.startswith(("https://", "http://")):
-                self.add_item(discord.ui.Button(label=f"{label} · ${price}", url=url))
+                self.add_item(discord.ui.Button(label=f"{label} · ${price}", emoji=icons.get(label), url=url))
 
 
 class OwnerRoleConfirmView(discord.ui.View):
@@ -126,18 +127,40 @@ class CommandMenu(commands.Cog):
             shop_url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(member.guild.id), "user_id": str(member.id), "signature": signature})
             offers = [(label, price, f"{shop_url}&product={key}") for (label, price, _), key in zip(offers, ("vc_perms", "anti_reject", "godmode", "all"))]
         view = VcOfferView(offers)
-        message = embed(str(data["title"])[:256], f"{str(data['message'])[:3000]}\n\nServer: **{member.guild.name}**\nVoice channel: **{channel.name}**")
-        message.add_field(name="VC Perms", value=f"${data['vc_perms_price']} · Voice access permissions", inline=True)
-        message.add_field(name="Anti-Reject", value=f"${data['anti_reject_price']} · Protected VC access", inline=True)
-        message.add_field(name="Godmode", value=f"${data['godmode_price']} · Full VC protection", inline=True)
-        message.add_field(name="All Access", value=f"${data['all_price']} · Complete access bundle", inline=True)
-        message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
+        message = discord.Embed(
+            title=str(data["title"])[:256],
+            description=(
+                f"{str(data['message'])[:2400]}\n\n"
+                f"**Server**\n{member.guild.name}\n\n"
+                f"**Voice channel**\n{channel.name}"
+            ),
+            color=discord.Color.from_rgb(35, 35, 38),
+        )
+        descriptions = {
+            "VC Perms": "Use the standard temporary-VC controls.",
+            "Anti-Reject": "Protection from VC reject actions.",
+            "Godmode": "Full protection from bot VC control actions.",
+            "All Access": "Every listed voice-access option in one package.",
+        }
+        for label, price, url in offers:
+            link = f"\n[Open checkout]({url})" if url.startswith(("https://", "http://")) else ""
+            message.add_field(name=f"{label}  ·  ${price}", value=f"{descriptions[label]}{link}", inline=False)
+        message.set_footer(text="Select an option below to continue. Contact server staff if you need help.")
+        embed_sent = False
         try:
-            await member.send(embed=message, view=view if view.children else None)
+            dm = member.dm_channel or await member.create_dm()
+            await dm.send(embed=message)
+            embed_sent = True
+            if view.children:
+                await dm.send("Choose an access option:", view=view)
             return True, ""
         except discord.Forbidden:
             return False, "Discord blocked the DM. The rejected member must allow server DMs and must not have the bot blocked."
         except discord.HTTPException:
+            # The embed includes compact checkout links, so it is still useful
+            # when a Discord client/API rejects the separate button row.
+            if embed_sent:
+                return True, ""
             lines = [str(data["message"])[:1200], "", f"Server: {member.guild.name}", f"Voice channel: {channel.name}", ""]
             for label, price, url in offers:
                 lines.append(f"{label}: ${price}" + (f" - {url}" if url.startswith(("https://", "http://")) else ""))
