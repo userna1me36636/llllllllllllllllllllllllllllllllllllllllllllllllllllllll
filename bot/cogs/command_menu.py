@@ -22,8 +22,6 @@ class VcOfferView(discord.ui.View):
         for label, price, url in offers:
             if url.startswith(("https://", "http://")):
                 self.add_item(discord.ui.Button(label=f"{label} · ${price}", url=url))
-            else:
-                self.add_item(discord.ui.Button(label=f"{label} · ${price}", style=discord.ButtonStyle.secondary, disabled=True))
 
 
 class OwnerRoleConfirmView(discord.ui.View):
@@ -102,11 +100,11 @@ class CommandMenu(commands.Cog):
             "move_members",
         )
 
-    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> tuple[bool, str]:
         settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
         offer = settings.get("vc_reject_offer", {})
         if not offer.get("enabled", True):
-            return False
+            return False, "VC Reject DM is turned off in the dashboard."
         defaults = {
             "title": "Voice Access Options",
             "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
@@ -135,10 +133,21 @@ class CommandMenu(commands.Cog):
         message.add_field(name="All Access", value=f"${data['all_price']} · Complete access bundle", inline=True)
         message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
         try:
-            await member.send(embed=message, view=view)
-            return True
-        except (discord.Forbidden, discord.HTTPException):
-            return False
+            await member.send(embed=message, view=view if view.children else None)
+            return True, ""
+        except discord.Forbidden:
+            return False, "Discord blocked the DM. The rejected member must allow server DMs and must not have the bot blocked."
+        except discord.HTTPException:
+            lines = [str(data["message"])[:1200], "", f"Server: {member.guild.name}", f"Voice channel: {channel.name}", ""]
+            for label, price, url in offers:
+                lines.append(f"{label}: ${price}" + (f" - {url}" if url.startswith(("https://", "http://")) else ""))
+            try:
+                await member.send("\n".join(lines)[:2000])
+                return True, ""
+            except discord.Forbidden:
+                return False, "Discord blocked the DM. The rejected member must allow server DMs and must not have the bot blocked."
+            except discord.HTTPException as retry_error:
+                return False, f"Discord rejected the DM (HTTP {retry_error.status}, code {retry_error.code})."
 
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
     channel = app_commands.Group(name="channel", description="Channel tools")
@@ -1142,8 +1151,8 @@ class CommandMenu(commands.Cog):
             await channel.set_permissions(member, connect=False)
             if member.voice and member.voice.channel == channel:
                 await member.move_to(None)
-            dm_sent = await self.send_vc_reject_offer(member, channel)
-            result = f"Rejected {member.mention}. The access-options DM was sent." if dm_sent else f"Rejected {member.mention}, but Discord blocked the DM or VC Reject DM is turned off."
+            dm_sent, dm_error = await self.send_vc_reject_offer(member, channel)
+            result = f"Rejected {member.mention}. The access-options DM was sent." if dm_sent else f"Rejected {member.mention}, but the DM was not sent. {dm_error}"
             await interaction.response.send_message(result, ephemeral=True)
             return
         await interaction.response.send_message("You do not own your current temporary voice channel, so nobody was rejected.", ephemeral=True)
