@@ -18,10 +18,12 @@ from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_durati
 
 class VcOfferView(discord.ui.View):
     def __init__(self, offers: list[tuple[str, str, str]]) -> None:
-        super().__init__(timeout=None)
+        super().__init__(timeout=900)
         for label, price, url in offers:
             if url.startswith(("https://", "http://")):
                 self.add_item(discord.ui.Button(label=f"{label} · ${price}", url=url))
+            else:
+                self.add_item(discord.ui.Button(label=f"{label} · ${price}", style=discord.ButtonStyle.secondary, disabled=True))
 
 
 class OwnerRoleConfirmView(discord.ui.View):
@@ -100,11 +102,11 @@ class CommandMenu(commands.Cog):
             "move_members",
         )
 
-    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> None:
+    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> bool:
         settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
         offer = settings.get("vc_reject_offer", {})
         if not offer.get("enabled", True):
-            return
+            return False
         defaults = {
             "title": "Voice Access Options",
             "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
@@ -117,9 +119,10 @@ class CommandMenu(commands.Cog):
             ("Godmode", str(data["godmode_price"]), str(data.get("godmode_url", ""))),
             ("All Access", str(data["all_price"]), str(data.get("all_url", ""))),
         ]
-        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/") or (f"https://{railway_domain}" if railway_domain else "")
         signing_secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
-        if public_url and signing_secret and os.getenv("STRIPE_SECRET_KEY", "").strip():
+        if public_url and signing_secret:
             payload = f"{member.guild.id}:{member.id}"
             signature = hmac.new(signing_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
             shop_url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(member.guild.id), "user_id": str(member.id), "signature": signature})
@@ -132,9 +135,10 @@ class CommandMenu(commands.Cog):
         message.add_field(name="All Access", value=f"${data['all_price']} · Complete access bundle", inline=True)
         message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
         try:
-            await member.send(embed=message, view=view if view.children else None)
+            await member.send(embed=message, view=view)
+            return True
         except (discord.Forbidden, discord.HTTPException):
-            pass
+            return False
 
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
     channel = app_commands.Group(name="channel", description="Channel tools")
@@ -1138,8 +1142,11 @@ class CommandMenu(commands.Cog):
             await channel.set_permissions(member, connect=False)
             if member.voice and member.voice.channel == channel:
                 await member.move_to(None)
-            await self.send_vc_reject_offer(member, channel)
-        await interaction.response.send_message(f"Rejected {member.mention}.", ephemeral=True)
+            dm_sent = await self.send_vc_reject_offer(member, channel)
+            result = f"Rejected {member.mention}. The access-options DM was sent." if dm_sent else f"Rejected {member.mention}, but Discord blocked the DM or VC Reject DM is turned off."
+            await interaction.response.send_message(result, ephemeral=True)
+            return
+        await interaction.response.send_message("You do not own your current temporary voice channel, so nobody was rejected.", ephemeral=True)
 
     @vc.command(name="transfer", description="Transfer your temporary voice channel ownership")
     async def vc_transfer(self, interaction: discord.Interaction, member: discord.Member) -> None:
