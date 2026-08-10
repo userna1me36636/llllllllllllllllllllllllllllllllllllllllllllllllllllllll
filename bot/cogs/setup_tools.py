@@ -101,6 +101,108 @@ class SetupTools(commands.Cog):
         e.add_field(name="Name", value=f"`{name}`", inline=False)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
+    @setup.command(name="bot_community", description="Build a compact AinBot promotion and support server")
+    @app_admin()
+    async def setup_bot_community(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_channels or not me.guild_permissions.manage_roles:
+            await interaction.followup.send("I need Manage Channels and Manage Roles before I can build the server.", ephemeral=True)
+            return
+
+        role_specs = [
+            ("AinBot Owner", discord.Permissions(administrator=True)),
+            ("Bot Developer", discord.Permissions(manage_guild=True, manage_channels=True, manage_roles=True, view_audit_log=True)),
+            ("Support Lead", discord.Permissions(manage_messages=True, moderate_members=True, view_audit_log=True)),
+            ("Support Team", discord.Permissions(manage_messages=True)),
+            ("Moderator", discord.Permissions(manage_messages=True, moderate_members=True, kick_members=True)),
+            ("Partner", discord.Permissions.none()),
+            ("Premium", discord.Permissions.none()),
+            ("Verified", discord.Permissions.none()),
+            ("Bots", discord.Permissions.none()),
+            ("Muted", discord.Permissions.none()),
+        ]
+        roles: dict[str, discord.Role] = {}
+        for name, permissions in role_specs:
+            role = discord.utils.get(guild.roles, name=name)
+            if role is None:
+                role = await guild.create_role(name=name, permissions=permissions, reason="AinBot community setup")
+            roles[name] = role
+
+        everyone = guild.default_role
+        staff_overwrites = {
+            everyone: discord.PermissionOverwrite(view_channel=False),
+            roles["AinBot Owner"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Bot Developer"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Support Lead"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Support Team"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Moderator"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True),
+        }
+        premium_overwrites = {
+            everyone: discord.PermissionOverwrite(view_channel=False),
+            roles["Premium"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["AinBot Owner"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Support Team"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            me: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        }
+
+        async def category(name: str, overwrites: dict | None = None) -> discord.CategoryChannel:
+            found = discord.utils.get(guild.categories, name=name)
+            return found or await guild.create_category(name, overwrites=overwrites, reason="AinBot community setup")
+
+        async def text_channel(cat: discord.CategoryChannel, name: str, topic: str, read_only: bool = False) -> discord.TextChannel:
+            found = discord.utils.get(cat.text_channels, name=name)
+            if found:
+                return found
+            overwrites = None
+            if read_only:
+                overwrites = {everyone: discord.PermissionOverwrite(view_channel=True, send_messages=False), me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
+            return await guild.create_text_channel(name, category=cat, topic=topic, overwrites=overwrites, reason="AinBot community setup")
+
+        start = await category("START HERE")
+        bot_hub = await category("AINBOT")
+        community = await category("COMMUNITY")
+        support = await category("SUPPORT")
+        premium = await category("PREMIUM", premium_overwrites)
+        staff = await category("STAFF", staff_overwrites)
+        voice = await category("VOICE")
+
+        welcome = await text_channel(start, "welcome", "Start here for AinBot information and community access.", True)
+        rules = await text_channel(start, "rules", "Community rules and Discord requirements.", True)
+        verify = await text_channel(start, "verify", "Account verification and member access.", True)
+        announcements = await text_channel(bot_hub, "announcements", "Official AinBot announcements.", True)
+        updates = await text_channel(bot_hub, "updates", "AinBot updates, fixes, and release notes.", True)
+        status = await text_channel(bot_hub, "status", "Live service and incident updates.", True)
+        commands_channel = await text_channel(bot_hub, "commands", "Command list and usage information.", True)
+        invite = await text_channel(bot_hub, "invite-ainbot", "Invite and authorization links for AinBot.", True)
+        general = await text_channel(community, "general", "Main AinBot community chat.")
+        showcase = await text_channel(community, "showcase", "Show server setups, themes, and AinBot results.")
+        suggestions = await text_channel(community, "suggestions", "Suggest new AinBot features and improvements.")
+        faq = await text_channel(support, "faq", "Common setup and troubleshooting answers.", True)
+        tickets = await text_channel(support, "open-a-ticket", "Open a private support ticket here.", True)
+        premium_chat = await text_channel(premium, "premium-chat", "Private chat for AinBot Premium members.")
+        premium_support = await text_channel(premium, "premium-support", "Priority support for Premium members.")
+        staff_chat = await text_channel(staff, "staff-chat", "Private staff coordination.")
+        staff_logs = await text_channel(staff, "bot-logs", "Private AinBot and moderation logs.")
+        payment_logs = await text_channel(staff, "payment-logs", "Private purchase and fulfillment notices.")
+
+        if discord.utils.get(voice.voice_channels, name="Community VC") is None:
+            await guild.create_voice_channel("Community VC", category=voice, reason="AinBot community setup")
+        if discord.utils.get(voice.voice_channels, name="Support Waiting") is None:
+            await guild.create_voice_channel("Support Waiting", category=voice, reason="AinBot community setup")
+        if discord.utils.get(voice.voice_channels, name="Premium VC") is None:
+            await guild.create_voice_channel("Premium VC", category=premium, overwrites=premium_overwrites, reason="AinBot community setup")
+
+        await self.bot.db.set_settings_value(guild.id, "logs_channel", staff_logs.id, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "welcome", {"channel_id": welcome.id, "message": "Welcome {mention} to the official AinBot community."}, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "setup", {"logs_channel": staff_logs.id, "welcome_channel": welcome.id, "ticket_category": support.id, "backup_channel": updates.id, "payment_logs_channel": payment_logs.id}, self.bot.settings.default_prefix)
+
+        await welcome.send(embed=await self.themed(guild.id, "Welcome to AinBot", "Get updates, support, premium access, setup help, and everything you need to run AinBot in your server."))
+        await rules.send(embed=await self.themed(guild.id, "Community Rules", "1. Respect members and staff.\n2. No scams, credential requests, raids, or abuse.\n3. Use support tickets for private help.\n4. Keep payment information private.\n5. Follow Discord's Terms of Service."))
+        await interaction.followup.send(embed=await self.themed(guild.id, "AinBot Community Server Ready", f"Created the compact promotion and support layout.\n\nStart in {welcome.mention}. Post your ticket panel in {tickets.mention}, verification panel in {verify.mention}, and command dashboard in {commands_channel.mention}."), ephemeral=True)
+
     @dashboard.command(name="overview", description="Show all major bot modules and setup status")
     @app_admin()
     async def dashboard_overview(self, interaction: discord.Interaction) -> None:
