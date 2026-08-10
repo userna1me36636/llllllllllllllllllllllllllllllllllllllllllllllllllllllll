@@ -22,6 +22,7 @@ COGS: tuple[str, ...] = (
     "bot.cogs.setup_tools",
     "bot.cogs.growth_safety",
     "bot.cogs.community_suite",
+    "bot.cogs.engagement",
     "bot.cogs.management_suite",
     "bot.cogs.moderation",
     "bot.cogs.automod",

@@ -318,6 +318,35 @@ def dashboard_html() -> str:
           <label>MVP winner</label><select id="mvpMember"></select>
           <div class="row"><button onclick="setupLiveChannels()">Create or Refresh Channels</button><button onclick="setMvp()">Set MVP Winner</button></div>
         </div>
+        <div class="card" id="engagementToolsCard">
+          <h2>Engagement Tools</h2>
+          <p>Manage sticky information, scheduled announcements and temporary roles without using Discord commands.</p>
+          <div class="card">
+            <h2>Sticky Message</h2>
+            <label>Channel</label><select id="stickyChannel"></select>
+            <label>Message</label><textarea id="stickyText" maxlength="4000" placeholder="Important information that should stay visible..."></textarea>
+            <label>Refresh after this many messages</label><input id="stickyRefresh" type="number" min="2" max="50" value="5">
+            <div class="row"><button onclick="saveSticky()">Save Sticky</button><button onclick="removeSticky()">Turn Off</button></div>
+          </div>
+          <div class="card">
+            <h2>Announcements</h2>
+            <label>Channel</label><select id="announcementChannel"></select>
+            <label>Title</label><input id="announcementTitle" maxlength="256" placeholder="Server Update">
+            <label>Message</label><textarea id="announcementText" maxlength="4000" placeholder="Write the announcement..."></textarea>
+            <label>Minutes from now</label><input id="announcementMinutes" type="number" min="1" max="43200" value="60">
+            <div class="row"><button onclick="sendAnnouncementNow()">Send Now</button><button onclick="scheduleAnnouncement()">Schedule</button></div>
+            <div id="scheduledAnnouncements"></div>
+          </div>
+          <div class="card">
+            <h2>Temporary Roles</h2>
+            <div class="row"><div><label>Member</label><select id="tempRoleMember"></select></div><div><label>Role</label><select id="tempRoleRole"></select></div></div>
+            <label>Minutes</label><input id="tempRoleMinutes" type="number" min="1" max="43200" value="1440">
+            <div class="row"><button onclick="giveTempRole()">Give Temporary Role</button><button onclick="removeTempRole()">Remove Early</button></div>
+            <div id="temporaryRoles"></div>
+          </div>
+          <button onclick="loadEngagement()">Refresh Engagement Tools</button>
+          <div id="stickyList"></div>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -356,9 +385,13 @@ async function loadSummary(){
   $('summary').innerHTML = `<h2>${data.name}</h2><span class="pill">${data.members} members</span><span class="pill">${data.channels} channels</span><span class="pill">${data.roles} roles</span><span class="pill">prefix ${data.prefix}</span><span class="pill">bot ${data.bot_name}</span><div class="stats"><div class="stat"><b>${data.slash_commands}</b><span>slash commands</span></div><div class="stat"><b>${data.prefix_commands}</b><span>prefix commands</span></div><div class="stat"><b>${data.total_commands}</b><span>total commands</span></div><div class="stat"><b>${data.voice_channels.length}</b><span>voice channels</span></div></div>`;
   $('voiceChannels').innerHTML = data.voice_channels.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
   $('textChannels').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  $('stickyChannel').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  $('announcementChannel').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
   $('members').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  $('tempRoleMember').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('mvpMember').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('roles').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  $('tempRoleRole').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   await loadVcOffer();
 }
@@ -491,11 +524,26 @@ async function createInvite(){
 }
 async function copyInvite(){ await navigator.clipboard.writeText($('inviteUrl').value); setStatus('Invite copied.'); }
 async function copyAuthorizationLink(){ await navigator.clipboard.writeText(location.origin + '/oauth/discord/start'); setStatus('Authorization link copied.'); }
+async function loadEngagement(){
+  try{
+    const data=await api('/api/guild/'+guild()+'/engagement');
+    $('stickyList').innerHTML=data.stickies.map(x=>`<div class="cmd"><b>#${safe(x.channel_name)}</b><span>Refreshes after ${x.refresh_after} messages · ${safe(x.text)}</span></div>`).join('')||'<p>No sticky messages configured.</p>';
+    $('scheduledAnnouncements').innerHTML=data.announcements.map(x=>`<div class="cmd"><b>#${safe(x.id)} · ${safe(x.title)}</b><span>#${safe(x.channel_name)} · ${safe(x.send_at)}</span><button onclick="cancelAnnouncement(${Number(x.id)})">Cancel</button></div>`).join('')||'<p>No scheduled announcements.</p>';
+    $('temporaryRoles').innerHTML=data.temporary_roles.map(x=>`<div class="cmd"><b>${safe(x.member_name)} · ${safe(x.role_name)}</b><span>Expires ${safe(x.expires_at)}</span></div>`).join('')||'<p>No temporary roles.</p>';
+  }catch(e){setStatus(e.message);}
+}
+async function saveSticky(){ await api('/api/guild/'+guild()+'/engagement/sticky',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'set',channel_id:$('stickyChannel').value,text:$('stickyText').value,refresh_after:$('stickyRefresh').value})}); setStatus('Sticky message saved.'); loadEngagement(); }
+async function removeSticky(){ await api('/api/guild/'+guild()+'/engagement/sticky',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'off',channel_id:$('stickyChannel').value})}); setStatus('Sticky message disabled.'); loadEngagement(); }
+async function sendAnnouncementNow(){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'send',channel_id:$('announcementChannel').value,title:$('announcementTitle').value,message:$('announcementText').value})}); setStatus('Announcement sent.'); }
+async function scheduleAnnouncement(){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'schedule',channel_id:$('announcementChannel').value,title:$('announcementTitle').value,message:$('announcementText').value,minutes:$('announcementMinutes').value})}); setStatus('Announcement scheduled.'); loadEngagement(); }
+async function cancelAnnouncement(id){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'cancel',id})}); setStatus('Announcement cancelled.'); loadEngagement(); }
+async function giveTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'give',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value,minutes:$('tempRoleMinutes').value})}); setStatus('Temporary role added.'); loadEngagement(); }
+async function removeTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'remove',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value})}); setStatus('Temporary role removed.'); loadEngagement(); }
 
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['engagement','Engagement'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -522,6 +570,7 @@ function setupTabs(){
     if(title.includes('promo codes')) tab='promos';
     if(title.includes('random giveaway')) tab='giveaways';
     if(title.includes('live channels')) tab='live';
+    if(title.includes('engagement tools')) tab='engagement';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -539,6 +588,7 @@ function showTab(id){
   if(id==='payments') loadPaymentLogs();
   if(id==='promos') loadPromos();
   if(id==='giveaways') loadGiveawayConfig();
+  if(id==='engagement') loadEngagement();
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){
@@ -1702,6 +1752,117 @@ class Dashboard:
             logs.insert(0, {"event": "failed_cog", "text": f"{name}: {reason}"})
         return web.json_response({"logs": logs[:25]})
 
+    async def engagement_status(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        stickies = []
+        for channel_id, item in settings.get("sticky_messages", {}).items():
+            channel = guild.get_channel(int(channel_id))
+            stickies.append({
+                "channel_id": channel_id,
+                "channel_name": channel.name if isinstance(channel, discord.TextChannel) else channel_id,
+                "text": str(item.get("text", ""))[:240],
+                "refresh_after": int(item.get("refresh_after", 5)),
+            })
+        announcements = []
+        for item in settings.get("scheduled_announcements", []):
+            channel = guild.get_channel(int(item.get("channel_id", 0)))
+            announcements.append({
+                "id": int(item.get("id", 0)),
+                "channel_name": channel.name if isinstance(channel, discord.TextChannel) else str(item.get("channel_id", "missing")),
+                "title": str(item.get("title", "Announcement")),
+                "send_at": str(item.get("send_at", "unknown")),
+            })
+        temporary_roles = []
+        for item in settings.get("temporary_roles", []):
+            member = guild.get_member(int(item.get("member_id", 0)))
+            role = guild.get_role(int(item.get("role_id", 0)))
+            temporary_roles.append({
+                "member_name": member.display_name if member else str(item.get("member_id", "missing")),
+                "role_name": role.name if role else str(item.get("role_id", "missing")),
+                "expires_at": str(item.get("expires_at", "unknown")),
+            })
+        return web.json_response({"stickies": stickies, "announcements": announcements, "temporary_roles": temporary_roles})
+
+    async def engagement_sticky(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+        if not isinstance(channel, discord.TextChannel):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose a valid text channel."}), content_type="application/json")
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        sticky_data = settings.get("sticky_messages", {})
+        old = sticky_data.get(str(channel.id), {})
+        old_message_id = old.get("message_id")
+        if old_message_id:
+            try:
+                await (await channel.fetch_message(int(old_message_id))).delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+        if str(body.get("action", "set")) == "off":
+            sticky_data.pop(str(channel.id), None)
+        else:
+            text = str(body.get("text", "")).strip()[:4000]
+            if not text:
+                raise web.HTTPBadRequest(text=json.dumps({"error": "Type a sticky message first."}), content_type="application/json")
+            refresh_after = max(2, min(int(body.get("refresh_after", 5) or 5), 50))
+            posted = await channel.send(embed=await self.bot.themed_embed(guild.id, "Pinned Information", text))
+            sticky_data[str(channel.id)] = {"text": text, "refresh_after": refresh_after, "message_id": posted.id}
+        await self.bot.db.set_settings_value(guild.id, "sticky_messages", sticky_data, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True})
+
+    async def engagement_announcement(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        action = str(body.get("action", "send"))
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        scheduled = settings.get("scheduled_announcements", [])
+        if action == "cancel":
+            item_id = int(body.get("id", 0) or 0)
+            scheduled = [item for item in scheduled if int(item.get("id", 0)) != item_id]
+            await self.bot.db.set_settings_value(guild.id, "scheduled_announcements", scheduled, self.bot.settings.default_prefix)
+            return web.json_response({"ok": True})
+        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+        if not isinstance(channel, discord.TextChannel):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose a valid announcement channel."}), content_type="application/json")
+        title = str(body.get("title", "")).strip()[:256]
+        message = str(body.get("message", "")).strip()[:4000]
+        if not title or not message:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Add an announcement title and message."}), content_type="application/json")
+        if action == "send":
+            await channel.send(embed=await self.bot.themed_embed(guild.id, title, message))
+            return web.json_response({"ok": True})
+        item_id = max((int(item.get("id", 0)) for item in scheduled), default=0) + 1
+        minutes = max(1, min(int(body.get("minutes", 60) or 60), 43200))
+        send_at = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
+        scheduled.append({"id": item_id, "channel_id": channel.id, "title": title, "message": message, "send_at": send_at.isoformat(), "created_by": 0})
+        await self.bot.db.set_settings_value(guild.id, "scheduled_announcements", scheduled[-100:], self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "id": item_id})
+
+    async def engagement_temprole(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        member = self.get_member_or_404(guild, body.get("member_id"))
+        role = self.get_role_or_404(guild, body.get("role_id"))
+        self.require_manageable_role(guild, role)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        entries = settings.get("temporary_roles", [])
+        entries = [item for item in entries if not (int(item.get("member_id", 0)) == member.id and int(item.get("role_id", 0)) == role.id)]
+        if str(body.get("action", "give")) == "remove":
+            if role in member.roles:
+                await member.remove_roles(role, reason="Dashboard temporary role removal")
+        else:
+            minutes = max(1, min(int(body.get("minutes", 1440) or 1440), 43200))
+            expires_at = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
+            await member.add_roles(role, reason="Dashboard temporary role assignment")
+            entries.append({"member_id": member.id, "role_id": role.id, "expires_at": expires_at.isoformat(), "reason": "Dashboard"})
+        await self.bot.db.set_settings_value(guild.id, "temporary_roles", entries[-500:], self.bot.settings.default_prefix)
+        return web.json_response({"ok": True})
+
     async def member_role(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
@@ -1823,6 +1984,10 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_post("/api/guild/{guild_id}/role/rename", dashboard.rename_role)
     app.router.add_post("/api/guild/{guild_id}/role/move_top", dashboard.move_role_top)
     app.router.add_get("/api/guild/{guild_id}/logs", dashboard.logs)
+    app.router.add_get("/api/guild/{guild_id}/engagement", dashboard.engagement_status)
+    app.router.add_post("/api/guild/{guild_id}/engagement/sticky", dashboard.engagement_sticky)
+    app.router.add_post("/api/guild/{guild_id}/engagement/announcement", dashboard.engagement_announcement)
+    app.router.add_post("/api/guild/{guild_id}/engagement/temprole", dashboard.engagement_temprole)
     app.router.add_post("/api/guild/{guild_id}/member/role", dashboard.member_role)
     app.router.add_post("/api/guild/{guild_id}/member/timeout", dashboard.timeout_member)
     app.router.add_post("/api/guild/{guild_id}/member/untimeout", dashboard.untimeout_member)

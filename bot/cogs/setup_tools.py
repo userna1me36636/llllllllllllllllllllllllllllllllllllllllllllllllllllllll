@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -19,6 +21,130 @@ DANGEROUS_PERMS = (
     "moderate_members",
     "view_audit_log",
 )
+
+
+SERVER_TEMPLATES: dict[str, dict[str, object]] = {
+    "community": {
+        "label": "Community",
+        "description": "A clean social server for conversation, events, media and member support.",
+        "roles": ["Verified", "Moderator", "Event Host", "Giveaway Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "announcements", "verify"],
+            "COMMUNITY": ["general", "media", "memes", "suggestions", "bot-commands"],
+            "EVENTS": ["events", "giveaways", "polls"],
+            "SUPPORT": ["faq", "open-a-ticket"],
+            "VOICE": ["General VC", "Gaming VC", "Music VC"],
+        },
+    },
+    "gaming": {
+        "label": "Gaming",
+        "description": "A gaming hub for squads, clips, looking-for-group posts and tournaments.",
+        "roles": ["Verified", "Moderator", "Event Host", "LFG Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "announcements", "verify"],
+            "GAMING": ["general", "looking-for-group", "clips", "game-news", "tournaments"],
+            "COMMUNITY": ["media", "memes", "suggestions", "bot-commands"],
+            "SUPPORT": ["faq", "open-a-ticket"],
+            "VOICE": ["Lobby", "Squad One", "Squad Two", "AFK"],
+        },
+    },
+    "music": {
+        "label": "Music and Artist",
+        "description": "A music community for releases, feedback, collaborations and listening sessions.",
+        "roles": ["Verified", "Moderator", "Artist", "Producer", "Release Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "announcements", "verify"],
+            "MUSIC": ["releases", "self-promo", "feedback", "collaborations", "beats-and-samples"],
+            "COMMUNITY": ["general", "media", "events", "bot-commands"],
+            "SUPPORT": ["faq", "open-a-ticket"],
+            "VOICE": ["Studio", "Listening Party", "Open Mic"],
+        },
+    },
+    "creator": {
+        "label": "Creator",
+        "description": "A creator community for content drops, feedback, collaborations and supporters.",
+        "roles": ["Verified", "Moderator", "Creator", "Collaborator", "Upload Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "announcements", "verify"],
+            "CONTENT": ["new-content", "clips", "ideas", "feedback", "collaborations"],
+            "COMMUNITY": ["general", "media", "suggestions", "bot-commands"],
+            "SUPPORT": ["faq", "open-a-ticket"],
+            "VOICE": ["Creator Lounge", "Recording Room", "Community VC"],
+        },
+    },
+    "business": {
+        "label": "Business",
+        "description": "A professional client and team space with updates, resources and private support.",
+        "roles": ["Verified", "Administrator", "Team", "Client", "Updates Ping"],
+        "categories": {
+            "INFORMATION": ["welcome", "rules", "announcements", "services"],
+            "CLIENTS": ["client-chat", "resources", "testimonials", "updates"],
+            "SUPPORT": ["faq", "open-a-ticket"],
+            "TEAM": ["team-chat", "team-tasks", "team-logs"],
+            "VOICE": ["Client Meeting", "Team Meeting", "Waiting Room"],
+        },
+    },
+    "marketplace": {
+        "label": "Marketplace",
+        "description": "A moderated marketplace for listings, reviews, support and transaction guidance.",
+        "roles": ["Verified", "Moderator", "Seller", "Buyer", "Listing Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "marketplace-rules", "verify"],
+            "MARKET": ["listings", "buying", "selling", "price-checks", "reviews"],
+            "COMMUNITY": ["general", "vouches", "suggestions"],
+            "SUPPORT": ["faq", "report-a-user", "open-a-ticket"],
+            "VOICE": ["Market Lounge", "Support Waiting"],
+        },
+    },
+    "support": {
+        "label": "Product Support",
+        "description": "A focused support server with documentation, incidents, tickets and customer updates.",
+        "roles": ["Verified", "Support Lead", "Support Team", "Customer", "Status Ping"],
+        "categories": {
+            "INFORMATION": ["welcome", "rules", "announcements", "status"],
+            "HELP CENTER": ["getting-started", "faq", "known-issues", "open-a-ticket"],
+            "COMMUNITY": ["general", "suggestions", "showcase"],
+            "STAFF": ["staff-chat", "support-queue", "bot-logs"],
+            "VOICE": ["Support Waiting", "Support Room One", "Support Room Two"],
+        },
+    },
+    "roleplay": {
+        "label": "Roleplay",
+        "description": "A roleplay server with lore, character creation, scenes and out-of-character spaces.",
+        "roles": ["Verified", "Moderator", "Game Master", "Player", "Event Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "lore", "verify"],
+            "CHARACTERS": ["character-rules", "character-submissions", "approved-characters"],
+            "ROLEPLAY": ["scene-one", "scene-two", "events"],
+            "OUT OF CHARACTER": ["general", "media", "suggestions"],
+            "VOICE": ["OOC Lounge", "Roleplay Room One", "Roleplay Room Two"],
+        },
+    },
+    "esports": {
+        "label": "Esports Team",
+        "description": "A competitive team server for tryouts, schedules, strategy and match operations.",
+        "roles": ["Verified", "Coach", "Team Captain", "Player", "Tryout"],
+        "categories": {
+            "INFORMATION": ["welcome", "rules", "announcements", "schedule"],
+            "TEAM": ["team-chat", "strategy", "vod-review", "scrims", "results"],
+            "RECRUITMENT": ["tryout-info", "applications", "open-a-ticket"],
+            "COMMUNITY": ["general", "clips", "suggestions"],
+            "VOICE": ["Team One", "Team Two", "Coach Room", "Tryouts"],
+        },
+    },
+    "study": {
+        "label": "Study and School",
+        "description": "A study community for accountability, resources, subjects and quiet work rooms.",
+        "roles": ["Verified", "Moderator", "Tutor", "Study Ping"],
+        "categories": {
+            "START HERE": ["welcome", "rules", "announcements", "verify"],
+            "STUDY": ["study-chat", "questions", "resources", "goals", "accountability"],
+            "SUBJECTS": ["math", "science", "writing", "technology"],
+            "COMMUNITY": ["general", "break-room", "suggestions"],
+            "VOICE": ["Silent Study", "Group Study", "Tutoring"],
+        },
+    },
+}
 
 
 class SetupTools(commands.Cog):
@@ -88,29 +214,119 @@ class SetupTools(commands.Cog):
         e.add_field(name="Prefix", value=f"`{prefix[:12]}`" if prefix else "No change", inline=True)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
-    @setup.command(name="jtc", description="Quickly configure join-to-create")
+    @setup.command(name="template", description="Paste a ready-made layout for a server type")
+    @app_commands.choices(server_type=[
+        app_commands.Choice(name="Community", value="community"),
+        app_commands.Choice(name="Gaming", value="gaming"),
+        app_commands.Choice(name="Music / Artist", value="music"),
+        app_commands.Choice(name="Creator / Streamer", value="creator"),
+        app_commands.Choice(name="Business", value="business"),
+        app_commands.Choice(name="Marketplace", value="marketplace"),
+        app_commands.Choice(name="Product Support", value="support"),
+        app_commands.Choice(name="Roleplay", value="roleplay"),
+        app_commands.Choice(name="Esports Team", value="esports"),
+        app_commands.Choice(name="Study / School", value="study"),
+    ])
     @app_admin()
-    async def setup_jtc(
-        self,
-        interaction: discord.Interaction,
-        lobby: discord.VoiceChannel,
-        output_category: discord.CategoryChannel | None = None,
-        name: str = "{user}'s room",
-        user_limit: app_commands.Range[int, 0, 99] = 0,
-    ) -> None:
-        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
-        templates = settings.get("jtc_templates", {})
-        templates[str(lobby.id)] = {
-            "name": name,
-            "user_limit": int(user_limit),
-            "category_id": output_category.id if output_category else None,
+    async def setup_template(self, interaction: discord.Interaction, server_type: app_commands.Choice[str]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        if guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.followup.send("Run this command inside a Discord server.", ephemeral=True)
+            return
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_channels or not me.guild_permissions.manage_roles:
+            await interaction.followup.send("I need Manage Channels and Manage Roles to paste a server template.", ephemeral=True)
+            return
+        template = SERVER_TEMPLATES.get(server_type.value)
+        if template is None:
+            await interaction.followup.send("That template is not available.", ephemeral=True)
+            return
+
+        roles: dict[str, discord.Role] = {}
+        for role_name in template["roles"]:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role is None:
+                permissions = discord.Permissions.none()
+                if role_name in {"Moderator", "Support Team"}:
+                    permissions = discord.Permissions(manage_messages=True, moderate_members=True)
+                elif role_name in {"Support Lead"}:
+                    permissions = discord.Permissions(manage_messages=True, moderate_members=True, view_audit_log=True)
+                role = await guild.create_role(name=role_name, permissions=permissions, reason=f"{template['label']} template")
+            roles[role_name] = role
+
+        verified_role = roles.get("Verified") or discord.utils.get(guild.roles, name="Verified")
+        if verified_role is None:
+            verified_role = await guild.create_role(name="Verified", reason=f"{template['label']} template")
+            roles["Verified"] = verified_role
+
+        created_channels: dict[str, discord.abc.GuildChannel] = {}
+        created_count = 0
+        for category_name, channel_names in template["categories"].items():
+            category = discord.utils.get(guild.categories, name=category_name)
+            if category is None:
+                category = await guild.create_category(category_name, reason=f"{template['label']} template")
+                created_count += 1
+            for channel_name in channel_names:
+                if category_name == "VOICE":
+                    channel = discord.utils.get(category.voice_channels, name=channel_name)
+                    if channel is None:
+                        channel = await guild.create_voice_channel(channel_name, category=category, reason=f"{template['label']} template")
+                        created_count += 1
+                else:
+                    channel = discord.utils.get(category.text_channels, name=channel_name)
+                    if channel is None:
+                        channel = await guild.create_text_channel(
+                            channel_name,
+                            category=category,
+                            topic=f"{template['label']} server — {channel_name.replace('-', ' ')}",
+                            reason=f"{template['label']} template",
+                        )
+                        created_count += 1
+                created_channels[channel_name] = channel
+
+        read_only_names = {"welcome", "rules", "announcements", "verify", "services", "status", "schedule", "lore", "marketplace-rules", "giveaways"}
+        for channel_name in read_only_names:
+            channel = created_channels.get(channel_name)
+            if isinstance(channel, discord.TextChannel):
+                await channel.set_permissions(guild.default_role, send_messages=False, reason="Template information channel")
+                await channel.set_permissions(me, view_channel=True, send_messages=True, embed_links=True, reason="AinBot template panels")
+
+        async def post_once(channel_name: str, title: str, description: str, view: discord.ui.View | None = None) -> None:
+            channel = created_channels.get(channel_name)
+            if not isinstance(channel, discord.TextChannel):
+                return
+            panel = await self.themed(guild.id, title, description)
+            async for message in channel.history(limit=20):
+                if message.author.id == me.id and message.embeds and message.embeds[0].title == title:
+                    await message.edit(embed=panel, view=view)
+                    return
+            await channel.send(embed=panel, view=view)
+
+        await post_once("welcome", f"Welcome to {guild.name}", str(template["description"]) + "\n\nRead the rules, verify, choose your roles and join the conversation.")
+        await post_once("rules", "Server Rules", "1. Respect members and staff.\n2. No scams, raids, harassment or unwanted advertising.\n3. Keep content in the correct channels.\n4. Do not share passwords, tokens, recovery codes or payment secrets.\n5. Follow Discord's Terms of Service and Community Guidelines.")
+        await post_once("announcements", "Announcements", "Official server news, events and important updates will be posted here.")
+
+        from bot.cogs.growth_safety import VerifyView
+        growth_cog = self.bot.get_cog("GrowthSafety")
+        if growth_cog:
+            await self.bot.db.set_settings_value(guild.id, "verify_role", verified_role.id, self.bot.settings.default_prefix)
+            await self.bot.db.set_settings_value(guild.id, "verify_min_account_days", 3, self.bot.settings.default_prefix)
+            await post_once("verify", "Verify", f"Press the button to receive {verified_role.mention} and unlock member access. Accounts must be at least three days old.", VerifyView(growth_cog))
+
+        from bot.cogs.tickets import TicketView
+        await post_once("open-a-ticket", "Support Tickets", "Open a private ticket when you need help. Explain what you need and wait for a staff member.", TicketView())
+
+        welcome_channel = created_channels.get("welcome")
+        ticket_channel = created_channels.get("open-a-ticket")
+        setup_data = {
+            "welcome_channel": welcome_channel.id if isinstance(welcome_channel, discord.TextChannel) else None,
+            "ticket_channel": ticket_channel.id if isinstance(ticket_channel, discord.TextChannel) else None,
+            "template": server_type.value,
         }
-        await self.bot.db.set_settings_value(interaction.guild_id, "jtc_templates", templates, self.bot.settings.default_prefix)
-        e = await self.themed(interaction.guild_id, "JTC Setup Saved")
-        e.add_field(name="Lobby", value=lobby.mention, inline=True)
-        e.add_field(name="Temp Category", value=output_category.name if output_category else "Same as lobby", inline=True)
-        e.add_field(name="Name", value=f"`{name}`", inline=False)
-        await interaction.response.send_message(embed=e, ephemeral=True)
+        await self.bot.db.set_settings_value(guild.id, "server_template", setup_data, self.bot.settings.default_prefix)
+        result = await self.themed(guild.id, f"{template['label']} Template Ready", f"Added or refreshed the layout and starter panels. `{created_count}` categories/channels were newly created. Existing channels were kept.")
+        await interaction.followup.send(embed=result, ephemeral=True)
 
     @setup.command(name="bot_community", description="Build a compact AinBot promotion and support server")
     async def setup_bot_community(self, interaction: discord.Interaction) -> None:
@@ -136,6 +352,9 @@ class SetupTools(commands.Cog):
             ("Partner", discord.Permissions.none()),
             ("Premium", discord.Permissions.none()),
             ("Verified", discord.Permissions.none()),
+            ("Server Booster", discord.Permissions.none()),
+            ("Giveaway Ping", discord.Permissions.none()),
+            ("Update Ping", discord.Permissions.none()),
             ("Bots", discord.Permissions.none()),
             ("Muted", discord.Permissions.none()),
         ]
@@ -163,24 +382,42 @@ class SetupTools(commands.Cog):
             roles["Support Team"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
             me: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         }
+        verified_overwrites = {
+            everyone: discord.PermissionOverwrite(view_channel=False),
+            roles["Verified"]: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+            roles["AinBot Owner"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Bot Developer"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Support Lead"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Support Team"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            roles["Moderator"]: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True),
+        }
 
         async def category(name: str, overwrites: dict | None = None) -> discord.CategoryChannel:
             found = discord.utils.get(guild.categories, name=name)
-            return found or await guild.create_category(name, overwrites=overwrites or {}, reason="AinBot community setup")
+            if found:
+                if overwrites is not None:
+                    await found.edit(overwrites=overwrites, reason="Refresh AinBot community access")
+                return found
+            return await guild.create_category(name, overwrites=overwrites or {}, reason="AinBot community setup")
 
         async def text_channel(cat: discord.CategoryChannel, name: str, topic: str, read_only: bool = False) -> discord.TextChannel:
             found = discord.utils.get(cat.text_channels, name=name)
             if found:
+                await found.edit(topic=topic, sync_permissions=not read_only, reason="Refresh AinBot community channel")
+                if read_only:
+                    await found.set_permissions(everyone, view_channel=None, send_messages=False, reason="AinBot read-only panel")
+                    await found.set_permissions(me, view_channel=True, send_messages=True, reason="AinBot panel access")
                 return found
             overwrites = None
             if read_only:
-                overwrites = {everyone: discord.PermissionOverwrite(view_channel=True, send_messages=False), me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
+                overwrites = {everyone: discord.PermissionOverwrite(send_messages=False), me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
             return await guild.create_text_channel(name, category=cat, topic=topic, overwrites=overwrites or {}, reason="AinBot community setup")
 
         start = await category("START HERE")
-        bot_hub = await category("AINBOT")
-        community = await category("COMMUNITY")
-        support = await category("SUPPORT")
+        bot_hub = await category("AINBOT", verified_overwrites)
+        community = await category("COMMUNITY", verified_overwrites)
+        support = await category("SUPPORT", verified_overwrites)
         premium = await category("PREMIUM", premium_overwrites)
         staff = await category("STAFF", staff_overwrites)
         voice = await category("VOICE")
@@ -194,10 +431,14 @@ class SetupTools(commands.Cog):
         commands_channel = await text_channel(bot_hub, "commands", "Command list and usage information.", True)
         invite = await text_channel(bot_hub, "invite-ainbot", "Invite and authorization links for AinBot.", True)
         general = await text_channel(community, "general", "Main AinBot community chat.")
+        media = await text_channel(community, "media", "Share screenshots, clips, art, and community media.")
         showcase = await text_channel(community, "showcase", "Show server setups, themes, and AinBot results.")
         suggestions = await text_channel(community, "suggestions", "Suggest new AinBot features and improvements.")
+        partnerships = await text_channel(community, "partnerships", "Approved community and creator partnerships.", True)
+        giveaways = await text_channel(community, "giveaways", "Official AinBot community giveaways.", True)
         faq = await text_channel(support, "faq", "Common setup and troubleshooting answers.", True)
         tickets = await text_channel(support, "open-a-ticket", "Open a private support ticket here.", True)
+        bug_reports = await text_channel(support, "bug-reports", "Report reproducible AinBot problems and include the command used.")
         premium_chat = await text_channel(premium, "premium-chat", "Private chat for AinBot Premium members.")
         premium_support = await text_channel(premium, "premium-support", "Priority support for Premium members.")
         staff_chat = await text_channel(staff, "staff-chat", "Private staff coordination.")
@@ -211,13 +452,72 @@ class SetupTools(commands.Cog):
         if discord.utils.get(voice.voice_channels, name="Premium VC") is None:
             await guild.create_voice_channel("Premium VC", category=premium, overwrites=premium_overwrites, reason="AinBot community setup")
 
+        stats_category = await category("LIVE STATS", verified_overwrites)
+        stats_ids: dict[str, int] = {}
+        for label in ("Members", "In VC", "Top Balance", "MVP Winner", "Giveaway Winner"):
+            prefix = f"{label}:"
+            channel = next((item for item in stats_category.voice_channels if item.name.startswith(prefix)), None)
+            if channel is None:
+                channel = await guild.create_voice_channel(f"{label}: 0", category=stats_category, reason="AinBot community setup")
+            await channel.set_permissions(everyone, connect=False)
+            stats_ids[label.lower()] = channel.id
+
         await self.bot.db.set_settings_value(guild.id, "logs_channel", staff_logs.id, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "welcome", {"channel_id": welcome.id, "message": "Welcome {mention} to the official AinBot community."}, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "verify_role", roles["Verified"].id, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "verify_min_account_days", 3, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "stats_channels", stats_ids, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "setup", {"logs_channel": staff_logs.id, "welcome_channel": welcome.id, "ticket_category": support.id, "backup_channel": updates.id, "payment_logs_channel": payment_logs.id}, self.bot.settings.default_prefix)
 
-        await welcome.send(embed=await self.themed(guild.id, "Welcome to AinBot", "Get updates, support, premium access, setup help, and everything you need to run AinBot in your server."))
-        await rules.send(embed=await self.themed(guild.id, "Community Rules", "1. Respect members and staff.\n2. No scams, credential requests, raids, or abuse.\n3. Use support tickets for private help.\n4. Keep payment information private.\n5. Follow Discord's Terms of Service."))
-        await interaction.followup.send(embed=await self.themed(guild.id, "AinBot Community Server Ready", f"Created the compact promotion and support layout.\n\nStart in {welcome.mention}. Post your ticket panel in {tickets.mention}, verification panel in {verify.mention}, and command dashboard in {commands_channel.mention}."), ephemeral=True)
+        async def post_once(channel: discord.TextChannel, title: str, description: str, view: discord.ui.View | None = None) -> None:
+            panel = await self.themed(guild.id, title, description)
+            async for message in channel.history(limit=30):
+                if message.author.id == me.id and message.embeds and message.embeds[0].title == title:
+                    await message.edit(embed=panel, view=view)
+                    return
+            await channel.send(embed=panel, view=view)
+
+        from bot.cogs.tickets import TicketView
+        from bot.cogs.growth_safety import VerifyView
+
+        growth_cog = self.bot.get_cog("GrowthSafety")
+        verify_view: discord.ui.View | None = VerifyView(growth_cog) if growth_cog else None
+        public_domain = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if not public_domain:
+            railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+            public_domain = f"https://{railway_domain}" if railway_domain else ""
+        if verify_view and public_domain.startswith(("https://", "http://")):
+            verify_view.add_item(discord.ui.Button(label="Authorize AinBot", style=discord.ButtonStyle.link, url=f"{public_domain}/oauth/discord/start"))
+
+        client_id = getattr(self.bot.user, "id", 0)
+        invite_url = discord.utils.oauth_url(client_id, permissions=discord.Permissions(
+            view_channel=True, send_messages=True, embed_links=True, read_message_history=True,
+            manage_messages=True, manage_channels=True, manage_roles=True, moderate_members=True,
+            kick_members=True, ban_members=True, move_members=True, connect=True, speak=True,
+        ))
+        invite_view = discord.ui.View(timeout=None)
+        invite_view.add_item(discord.ui.Button(label="Add AinBot", style=discord.ButtonStyle.link, url=invite_url))
+        if public_domain.startswith(("https://", "http://")):
+            invite_view.add_item(discord.ui.Button(label="Authorize Account", style=discord.ButtonStyle.link, url=f"{public_domain}/oauth/discord/start"))
+
+        await post_once(welcome, "Welcome to AinBot", "AinBot is built for active communities that need moderation, defense, temporary voice channels, tickets, giveaways, economy, music and clean server management. Start in the verification channel, then explore the server.")
+        await post_once(rules, "Community Rules", "1. Respect members and staff.\n2. No scams, credential requests, raids, or abuse.\n3. No unsolicited advertising or mass mentions.\n4. Use tickets for private support and never post tokens, passwords, payment details or OAuth secrets.\n5. Follow Discord's Terms of Service and Community Guidelines.")
+        await post_once(verify, "Get Verified", "Press **Verify** to unlock the community. Accounts must be at least three days old. The optional authorization button connects your Discord account to AinBot for Discord-approved member transfer; it never asks for your password.", verify_view)
+        await post_once(announcements, "Official Announcements", "Product news, community announcements and important service notices are posted here.")
+        await post_once(updates, "AinBot Updates", "New commands, improvements and fixes will be posted here with clear setup notes.")
+        await post_once(status, "Service Status", "AinBot is online. If a command fails, run `/doctor` and open a support ticket with the result.")
+        await post_once(commands_channel, "AinBot Commands", "Run `/help` for the full command menu. Use `/doctor` for permission and configuration checks, `/setup wizard` for server setup, `/setup jtc` for temporary voice channels, and `/lock all` during a server-wide incident.")
+        await post_once(invite, "Add AinBot", "Add AinBot to a server you manage. Discord will show every requested permission before you approve it. Account authorization is optional and is only used for features that require explicit consent.", invite_view)
+        await post_once(partnerships, "Partnerships", "Approved creators and communities are featured here. Open a ticket with your server invite, member count, activity level and what you want to build with AinBot.")
+        await post_once(giveaways, "Community Giveaways", "Official giveaways are posted here. AinBot staff will never request payment, a password, token or recovery code to release a prize.")
+        await post_once(faq, "Quick Answers", "**Bot not responding?** Run `/doctor`.\n**Need server setup?** Run `/setup wizard`.\n**Need temporary voice channels?** Run `/setup jtc`.\n**Need private help?** Use the ticket panel.\n**Need the bot invite?** Visit the invite channel.")
+        await post_once(tickets, "AinBot Support", "Open a private ticket for setup, billing or technical support. Include the command you used and what happened. Never send passwords, bot tokens or payment secrets.", TicketView())
+
+        stats_cog = self.bot.get_cog("GrowthSafety")
+        if stats_cog and hasattr(stats_cog, "update_stats"):
+            await stats_cog.update_stats(guild)
+
+        await interaction.followup.send(embed=await self.themed(guild.id, "AinBot Community Ready", f"The compact community layout, roles, verification gate, support panel, invite buttons, OAuth authorization link and live statistics are ready.\n\nMembers start in {verify.mention}. Support opens in {tickets.mention}."), ephemeral=True)
 
     @dashboard.command(name="overview", description="Show all major bot modules and setup status")
     @app_admin()

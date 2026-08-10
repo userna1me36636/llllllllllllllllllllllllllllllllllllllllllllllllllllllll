@@ -9,7 +9,7 @@ import qrcode
 from discord import app_commands
 from discord.ext import commands
 
-from bot.core.utils import embed, parse_duration, random_code
+from bot.core.utils import embed, random_code
 
 
 class Utility(commands.Cog):
@@ -19,10 +19,6 @@ class Utility(commands.Cog):
         self.edited: dict[int, tuple[str, str]] = {}
 
     utility = app_commands.Group(name="utility", description="Useful server tools")
-
-    @utility.command(name="ping", description="Show bot latency")
-    async def ping(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_message(f"Pong: {round(self.bot.latency * 1000)}ms")
 
     @utility.command(name="avatar", description="Show a user's avatar")
     async def avatar(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
@@ -68,13 +64,6 @@ class Utility(commands.Cog):
     async def send_embed(self, interaction: discord.Interaction, title: str, description: str) -> None:
         await interaction.channel.send(embed=embed(title, description))
         await interaction.response.send_message("Embed sent.", ephemeral=True)
-
-    @utility.command(name="remind", description="Set a reminder")
-    async def remind(self, interaction: discord.Interaction, duration: str, text: str) -> None:
-        when = discord.utils.utcnow() + parse_duration(duration)
-        await interaction.response.send_message(f"I will remind you {discord.utils.format_dt(when, 'R')}.", ephemeral=True)
-        await discord.utils.sleep_until(when)
-        await interaction.user.send(f"Reminder: {text}")
 
     @utility.command(name="qr", description="Generate a QR code")
     async def qr(self, interaction: discord.Interaction, text: str) -> None:
