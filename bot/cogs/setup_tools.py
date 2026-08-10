@@ -166,7 +166,7 @@ class SetupTools(commands.Cog):
 
         async def category(name: str, overwrites: dict | None = None) -> discord.CategoryChannel:
             found = discord.utils.get(guild.categories, name=name)
-            return found or await guild.create_category(name, overwrites=overwrites, reason="AinBot community setup")
+            return found or await guild.create_category(name, overwrites=overwrites or {}, reason="AinBot community setup")
 
         async def text_channel(cat: discord.CategoryChannel, name: str, topic: str, read_only: bool = False) -> discord.TextChannel:
             found = discord.utils.get(cat.text_channels, name=name)
@@ -175,7 +175,7 @@ class SetupTools(commands.Cog):
             overwrites = None
             if read_only:
                 overwrites = {everyone: discord.PermissionOverwrite(view_channel=True, send_messages=False), me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
-            return await guild.create_text_channel(name, category=cat, topic=topic, overwrites=overwrites, reason="AinBot community setup")
+            return await guild.create_text_channel(name, category=cat, topic=topic, overwrites=overwrites or {}, reason="AinBot community setup")
 
         start = await category("START HERE")
         bot_hub = await category("AINBOT")
