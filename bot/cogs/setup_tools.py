@@ -40,6 +40,17 @@ class SetupTools(commands.Cog):
         style_embed(e, banner_url=theme.get("banner_url"), flashy=False)
         return e
 
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        self.bot.log.exception("Setup command failed", exc_info=error)
+        message = f"Setup stopped: `{type(error).__name__}`. Check the bot's role permissions and Railway logs."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
+
     @setup.command(name="wizard", description="Set the main channels/categories the bot should use")
     @app_admin()
     async def setup_wizard(
@@ -102,10 +113,15 @@ class SetupTools(commands.Cog):
         await interaction.response.send_message(embed=e, ephemeral=True)
 
     @setup.command(name="bot_community", description="Build a compact AinBot promotion and support server")
-    @app_admin()
     async def setup_bot_community(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
+        if guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.followup.send("Run this command inside a Discord server.", ephemeral=True)
+            return
+        if not interaction.user.guild_permissions.administrator and not await self.bot.is_owner(interaction.user):
+            await interaction.followup.send("Only a server administrator or configured bot owner can build the community server.", ephemeral=True)
+            return
         me = guild.me
         if me is None or not me.guild_permissions.manage_channels or not me.guild_permissions.manage_roles:
             await interaction.followup.send("I need Manage Channels and Manage Roles before I can build the server.", ephemeral=True)
