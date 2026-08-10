@@ -470,17 +470,29 @@ class CommandMenu(commands.Cog):
     @remind.command(name="me", description="Set a personal reminder")
     async def remind_me(self, interaction: discord.Interaction, duration: str, message: str) -> None:
         when = discord.utils.utcnow() + parse_duration(duration)
-        await interaction.response.send_message(f"I will remind you {discord.utils.format_dt(when, 'R')}.", ephemeral=True)
-        await discord.utils.sleep_until(when)
-        await interaction.user.send(f"Reminder: {message}")
+        reminder_id = await self.bot.db.execute(
+            "INSERT INTO reminders(user_id,guild_id,channel_id,message,remind_at) VALUES(?,?,?,?,?)",
+            interaction.user.id,
+            interaction.guild_id,
+            interaction.channel_id,
+            message[:1800],
+            when.timestamp(),
+        )
+        await interaction.response.send_message(f"Reminder `#{reminder_id}` saved for {discord.utils.format_dt(when, 'R')}. It survives restarts.", ephemeral=True)
 
     @remind.command(name="list", description="List your reminders")
     async def remind_list(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_message("Reminder storage is lightweight in this build; active reminders are kept while the bot is online.", ephemeral=True)
+        rows = await self.bot.db.fetchall("SELECT id,message,remind_at FROM reminders WHERE user_id=? AND delivered=0 ORDER BY remind_at LIMIT 20", interaction.user.id)
+        text = "\n".join(f"`#{row['id']}` <t:{int(row['remind_at'])}:R> — {row['message'][:100]}" for row in rows) or "You have no active reminders."
+        await interaction.response.send_message(embed=await self.bot.themed_embed(interaction.guild_id, "Your Reminders", text), ephemeral=True)
 
     @remind.command(name="delete", description="Delete one of your reminders")
     async def remind_delete(self, interaction: discord.Interaction, reminder_id: str) -> None:
-        await interaction.response.send_message("That reminder was cleared if it was active.", ephemeral=True)
+        if not reminder_id.isdigit():
+            await interaction.response.send_message("Use the numeric reminder ID shown by `/remind list`.", ephemeral=True)
+            return
+        await self.bot.db.execute("DELETE FROM reminders WHERE id=? AND user_id=?", int(reminder_id), interaction.user.id)
+        await interaction.response.send_message("Reminder deleted if it belonged to you.", ephemeral=True)
 
     @role.command(name="add", description="Add a role to a member")
     @app_commands.default_permissions(manage_roles=True)

@@ -113,6 +113,8 @@ def dashboard_html() -> str:
         <h2>Connect</h2>
         <label>Dashboard token</label>
         <input id="token" placeholder="DASHBOARD_TOKEN" type="password">
+        <a class="button" href="/oauth/dashboard/start">Sign in with Discord</a>
+        <p>Owners can sign in with Discord. The token remains available for emergency access.</p>
         <label>Server</label>
         <select id="guilds" onchange="loadSummary()"></select>
         <div class="row">
@@ -347,6 +349,12 @@ def dashboard_html() -> str:
           <button onclick="loadEngagement()">Refresh Engagement Tools</button>
           <div id="stickyList"></div>
         </div>
+        <div class="card" id="recentUpdatesCard">
+          <h2>Recent Updates</h2>
+          <p>The latest AinBot releases, their dates and everything included in each update.</p>
+          <button onclick="loadUpdates()">Refresh Updates</button>
+          <div id="updatesList"></div>
+        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
@@ -453,7 +461,7 @@ async function loadPaymentLogs(){
   try {
     const data=await api('/api/guild/' + guild() + '/payment-logs');
     $('paymentConfigNotice').innerHTML=data.stripe_configured ? '' : '<p class="notice">Set PUBLIC_BASE_URL, STRIPE_SECRET_KEY, and STRIPE_WEBHOOK_SECRET to enable verified checkout logs.</p>';
-    $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
+    $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}${payment.refunded?' · REFUNDED':''}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
   } catch(e){ setStatus(e.message); }
 }
 async function loadPromos(){ const data=await api('/api/guild/'+guild()+'/promos'); $('promoList').innerHTML=data.codes.map(c=>`<div class="cmd"><b>${safe(c.code)} · ${c.percent_off}% off</b><span>${c.active?'Active':'Inactive'} · For: ${safe(c.product==='all'?'All packages':c.product.replaceAll('_',' '))} · ${c.uses}/${c.max_uses||'unlimited'} uses · Used by: ${safe(c.used_by||'Nobody yet')}</span><button onclick="togglePromo('${safe(c.code)}',${c.percent_off},${c.max_uses},'${safe(c.product)}',${!c.active})">${c.active?'Disable':'Enable'}</button></div>`).join('')||'<p>No promo codes yet.</p>'; }
@@ -539,11 +547,17 @@ async function scheduleAnnouncement(){ await api('/api/guild/'+guild()+'/engagem
 async function cancelAnnouncement(id){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'cancel',id})}); setStatus('Announcement cancelled.'); loadEngagement(); }
 async function giveTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'give',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value,minutes:$('tempRoleMinutes').value})}); setStatus('Temporary role added.'); loadEngagement(); }
 async function removeTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'remove',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value})}); setStatus('Temporary role removed.'); loadEngagement(); }
+async function loadUpdates(){
+  try{
+    const data=await api('/api/updates');
+    $('updatesList').innerHTML=data.updates.map(update=>`<div class="card"><span class="pill">${safe(update.released_on)}</span><h2>${safe(update.title)}</h2><p>${safe(update.notes)}</p></div>`).join('')||'<p>No updates have been published yet.</p>';
+  }catch(e){setStatus(e.message);}
+}
 
 function setupTabs(){
   const main = document.querySelector('main.panel');
   const definitions = [
-    ['overview','Overview'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['engagement','Engagement'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
+    ['overview','Overview'], ['updates','Updates'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['engagement','Engagement'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
     ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
   ];
   const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
@@ -571,6 +585,7 @@ function setupTabs(){
     if(title.includes('random giveaway')) tab='giveaways';
     if(title.includes('live channels')) tab='live';
     if(title.includes('engagement tools')) tab='engagement';
+    if(title.includes('recent updates')) tab='updates';
     if(title.includes('live logs')) tab='logs';
     panels[tab].appendChild(node);
   });
@@ -589,6 +604,7 @@ function showTab(id){
   if(id==='promos') loadPromos();
   if(id==='giveaways') loadGiveawayConfig();
   if(id==='engagement') loadEngagement();
+  if(id==='updates') loadUpdates();
   history.replaceState(null,'','#'+id);
 }
 function makeDropdownsSearchable(){
@@ -666,6 +682,29 @@ class Dashboard:
                 await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
         return True, role.name
 
+    async def remove_access(self, guild_id: str, user_id: str, product: str, reason: str) -> tuple[bool, str]:
+        if not guild_id.isdigit() or not user_id.isdigit() or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
+            return False, "Invalid fulfillment details."
+        guild = self.bot.get_guild(int(guild_id))
+        if guild is None:
+            return False, "The bot is not connected to that server."
+        member = guild.get_member(int(user_id))
+        if member is None:
+            return False, "The member is no longer in that server."
+        role_names = {"vc_perms": ["VC Perms"], "anti_reject": ["Anti-Reject"], "godmode": ["VC Godmode"], "all": ["All Access", "VC Perms", "Anti-Reject", "VC Godmode"]}
+        try:
+            roles = [role for name in role_names[product] if (role := discord.utils.get(guild.roles, name=name)) is not None]
+            if roles:
+                await member.remove_roles(*roles, reason=reason)
+        except (discord.Forbidden, discord.HTTPException):
+            return False, "Discord could not remove the access role."
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
+        for key in keys:
+            ids = [value for value in settings.get(key, []) if int(value) != member.id]
+            await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
+        return True, "Access removed"
+
     def _load_owner_ids(self) -> None:
         if not self.owner_ids_file.exists():
             return
@@ -703,9 +742,16 @@ class Dashboard:
                     currency TEXT NOT NULL,
                     customer_email TEXT,
                     payment_methods TEXT,
-                    paid_at INTEGER NOT NULL
+                    paid_at INTEGER NOT NULL,
+                    payment_intent TEXT,
+                    refunded INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+            payment_columns = {row[1] for row in db.execute("PRAGMA table_info(payment_logs)")}
+            if "payment_intent" not in payment_columns:
+                db.execute("ALTER TABLE payment_logs ADD COLUMN payment_intent TEXT")
+            if "refunded" not in payment_columns:
+                db.execute("ALTER TABLE payment_logs ADD COLUMN refunded INTEGER NOT NULL DEFAULT 0")
             db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
                 guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
@@ -743,21 +789,45 @@ class Dashboard:
         settings = self.bot.settings
         return bool(settings.discord_client_id and settings.discord_client_secret and settings.discord_oauth_redirect_uri and settings.oauth_state_secret)
 
-    def _oauth_state(self) -> str:
+    def _oauth_state(self, mode: str = "member") -> str:
         issued = str(int(time.time()))
         nonce = secrets.token_urlsafe(16)
-        payload = f"{issued}.{nonce}"
+        mode = "dashboard" if mode == "dashboard" else "member"
+        payload = f"{issued}.{nonce}.{mode}"
         signature = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
         return f"{payload}.{signature}"
 
-    def _valid_oauth_state(self, state: str) -> bool:
+    def _oauth_state_mode(self, state: str) -> str | None:
         try:
-            issued, nonce, signature = state.split(".", 2)
-            payload = f"{issued}.{nonce}"
+            issued, nonce, mode, signature = state.split(".", 3)
+            payload = f"{issued}.{nonce}.{mode}"
             expected = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            return hmac.compare_digest(signature, expected) and abs(int(time.time()) - int(issued)) <= 900
+            if hmac.compare_digest(signature, expected) and abs(int(time.time()) - int(issued)) <= 900 and mode in {"member", "dashboard"}:
+                return mode
+            return None
         except (AttributeError, TypeError, ValueError):
-            return False
+            return None
+
+    def _valid_oauth_state(self, state: str) -> bool:
+        return self._oauth_state_mode(state) is not None
+
+    def _dashboard_session(self, user_id: int, expires_at: int | None = None) -> str:
+        expires_at = expires_at or int(time.time()) + 86400
+        payload = f"{user_id}.{expires_at}"
+        signature = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return f"{payload}.{signature}"
+
+    def _dashboard_session_user(self, token: str) -> int | None:
+        try:
+            user_id, expires_at, signature = token.split(".", 2)
+            payload = f"{user_id}.{expires_at}"
+            expected = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            value = int(user_id)
+            if hmac.compare_digest(signature, expected) and int(expires_at) >= int(time.time()) and value in self.bot.settings.owner_ids:
+                return value
+        except (AttributeError, TypeError, ValueError):
+            pass
+        return None
 
 
     def _authorizations(self) -> list[dict[str, Any]]:
@@ -793,10 +863,12 @@ class Dashboard:
     def require_token(self, request: web.Request) -> None:
         expected = getattr(self.bot.settings, "dashboard_token", None)
         provided = request.query.get("token") or request.headers.get("x-dashboard-token")
-        if not expected:
-            raise web.HTTPUnauthorized(text=json.dumps({"error": "Set DASHBOARD_TOKEN in Railway Variables first."}), content_type="application/json")
-        if provided != expected:
-            raise web.HTTPForbidden(text=json.dumps({"error": "Wrong dashboard token."}), content_type="application/json")
+        session_user = self._dashboard_session_user(request.cookies.get("ain_dashboard_session", "")) if self._oauth_configured() else None
+        if session_user is not None:
+            return
+        if expected and provided == expected:
+            return
+        raise web.HTTPForbidden(text=json.dumps({"error": "Sign in with an owner Discord account or enter the correct dashboard token."}), content_type="application/json")
 
     def guild_or_404(self, guild_id: str) -> discord.Guild:
         guild = self.bot.get_guild(int(guild_id))
@@ -858,14 +930,28 @@ class Dashboard:
             "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
             "response_type": "code",
             "scope": "identify guilds.join",
-            "state": self._oauth_state(),
+            "state": self._oauth_state("member"),
+            "prompt": "consent",
+        })
+        raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
+
+    async def dashboard_oauth_start(self, _: web.Request) -> web.Response:
+        if not self._oauth_configured():
+            raise web.HTTPServiceUnavailable(text="Discord OAuth is not configured yet.")
+        query = urllib.parse.urlencode({
+            "client_id": self.bot.settings.discord_client_id,
+            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
+            "response_type": "code",
+            "scope": "identify",
+            "state": self._oauth_state("dashboard"),
             "prompt": "consent",
         })
         raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
 
     async def oauth_callback(self, request: web.Request) -> web.Response:
         state = request.query.get("state", "")
-        if not self._oauth_configured() or not self._valid_oauth_state(state):
+        mode = self._oauth_state_mode(state)
+        if not self._oauth_configured() or mode is None:
             raise web.HTTPBadRequest(text="Invalid or expired authorization request.")
         code = request.query.get("code")
         if not code:
@@ -887,6 +973,13 @@ class Dashboard:
                 user = await response.json()
                 if response.status != 200:
                     raise web.HTTPBadRequest(text="Discord could not identify the authorized user.")
+        if mode == "dashboard":
+            user_id = int(user["id"])
+            if user_id not in self.bot.settings.owner_ids:
+                raise web.HTTPForbidden(text="That Discord account is not listed in OWNER_IDS.")
+            response = web.HTTPFound("/")
+            response.set_cookie("ain_dashboard_session", self._dashboard_session(user_id), max_age=86400, httponly=True, secure=True, samesite="Lax")
+            raise response
         expires_at = int(time.time()) + int(tokens.get("expires_in", 0))
         username = user.get("global_name") or user.get("username") or user["id"]
         with sqlite3.connect(self.oauth_db) as db:
@@ -1190,8 +1283,8 @@ class Dashboard:
                 metadata = session.get("metadata", {})
                 customer = session.get("customer_details") or {}
                 with sqlite3.connect(self.oauth_db) as db:
-                    db.execute("""INSERT OR IGNORE INTO payment_logs(session_id,guild_id,user_id,product,amount,currency,customer_email,payment_methods,paid_at) VALUES(?,?,?,?,?,?,?,?,?)""",
-                        (session["id"], str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")), int(session.get("amount_total", 0)), str(session.get("currency", "usd")), customer.get("email"), ", ".join(session.get("payment_method_types", [])), int(time.time())))
+                    db.execute("""INSERT OR IGNORE INTO payment_logs(session_id,guild_id,user_id,product,amount,currency,customer_email,payment_methods,paid_at,payment_intent,refunded) VALUES(?,?,?,?,?,?,?,?,?,?,0)""",
+                        (session["id"], str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")), int(session.get("amount_total", 0)), str(session.get("currency", "usd")), customer.get("email"), ", ".join(session.get("payment_method_types", [])), int(time.time()), str(session.get("payment_intent", ""))))
                     promo = str(metadata.get("promo_code", "")).upper()
                     if promo:
                         inserted = db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (session["id"], str(metadata.get("guild_id", "")), promo, str(metadata.get("user_id", "")), int(time.time())))
@@ -1201,6 +1294,19 @@ class Dashboard:
                 if not fulfilled:
                     self.bot.log.error("Automatic payment fulfillment failed for Stripe session %s: %s", session.get("id"), detail)
                     raise web.HTTPServiceUnavailable(text="Payment was recorded but Discord role fulfillment will be retried.")
+        elif event.get("type") in {"charge.refunded", "charge.dispute.created"}:
+            charge = event.get("data", {}).get("object", {})
+            payment_intent = str(charge.get("payment_intent", ""))
+            if payment_intent:
+                with sqlite3.connect(self.oauth_db) as db:
+                    db.row_factory = sqlite3.Row
+                    row = db.execute("SELECT guild_id,user_id,product FROM payment_logs WHERE payment_intent=? ORDER BY paid_at DESC LIMIT 1", (payment_intent,)).fetchone()
+                    if row:
+                        db.execute("UPDATE payment_logs SET refunded=1 WHERE payment_intent=?", (payment_intent,))
+                if row:
+                    removed, detail = await self.remove_access(str(row["guild_id"]), str(row["user_id"]), str(row["product"]), "Stripe refund or payment dispute")
+                    if not removed:
+                        self.bot.log.error("Could not remove refunded access for payment intent %s: %s", payment_intent, detail)
         return web.json_response({"received": True})
 
     async def payment_logs(self, request: web.Request) -> web.Response:
@@ -1311,6 +1417,11 @@ class Dashboard:
         self.require_token(request)
         self.guild_or_404(request.match_info["guild_id"])
         return web.json_response({"commands": self.command_list()})
+
+    async def updates_api(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        rows = await self.bot.db.fetchall("SELECT released_on,title,notes FROM bot_updates ORDER BY released_on DESC,id DESC LIMIT 25")
+        return web.json_response({"updates": [dict(row) for row in rows]})
 
     async def search(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1936,9 +2047,29 @@ class Dashboard:
 
 async def start_dashboard(bot: commands.Bot) -> None:
     dashboard = Dashboard(bot)
-    app = web.Application()
+    @web.middleware
+    async def dashboard_audit(request: web.Request, handler: Any) -> web.StreamResponse:
+        response = await handler(request)
+        guild_id = request.match_info.get("guild_id")
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and guild_id and str(guild_id).isdigit() and response.status < 400:
+            actor_id = dashboard._dashboard_session_user(request.cookies.get("ain_dashboard_session", "")) or 0
+            try:
+                await bot.db.execute(
+                    "INSERT INTO audit_events(guild_id,actor_id,target_id,event,data) VALUES(?,?,?,?,?)",
+                    int(guild_id),
+                    actor_id,
+                    0,
+                    "dashboard_change",
+                    json.dumps({"method": request.method, "path": request.path}),
+                )
+            except Exception:
+                bot.log.exception("Could not record dashboard audit event")
+        return response
+
+    app = web.Application(middlewares=[dashboard_audit])
     app.router.add_get("/", dashboard.index)
     app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
+    app.router.add_get("/oauth/dashboard/start", dashboard.dashboard_oauth_start)
     app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
     app.router.add_get("/shop", dashboard.shop)
     app.router.add_get("/claim/free", dashboard.free_claim)
@@ -1946,6 +2077,7 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/checkout/success", dashboard.checkout_success)
     app.router.add_post("/webhooks/stripe", dashboard.stripe_webhook)
     app.router.add_get("/api/guilds", dashboard.guilds)
+    app.router.add_get("/api/updates", dashboard.updates_api)
     app.router.add_get("/api/owner-ids", dashboard.owner_ids)
     app.router.add_post("/api/owner-ids/add", dashboard.add_owner_id)
     app.router.add_post("/api/owner-ids/remove", dashboard.remove_owner_id)

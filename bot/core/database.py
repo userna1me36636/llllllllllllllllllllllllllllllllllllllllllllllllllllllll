@@ -111,6 +111,31 @@ CREATE TABLE IF NOT EXISTS backup_codes (
   used INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  guild_id INTEGER,
+  channel_id INTEGER,
+  message TEXT NOT NULL,
+  remind_at REAL NOT NULL,
+  delivered INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS bot_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  update_key TEXT NOT NULL UNIQUE,
+  released_on TEXT NOT NULL,
+  title TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  created_by INTEGER
+);
+INSERT OR IGNORE INTO bot_updates(update_key,released_on,title,notes,created_by) VALUES(
+  'reliability-community-2026-08-13',
+  '2026-08-13',
+  'Community and Reliability Update',
+  'Added ten server templates, automatic community setup, sticky messages, scheduled announcements, temporary roles, the Engagement dashboard tab, duplicate-command cleanup, persistent reminders, ticket transcript logs, OAuth owner login, payment refund role removal, health alerts, automatic database backups, safe test commands, template preview and rollback, dashboard audit history, unique error IDs, and the OWNER_IDS-only /ainsd shutdown command.',
+  NULL
+);
 """
 
 

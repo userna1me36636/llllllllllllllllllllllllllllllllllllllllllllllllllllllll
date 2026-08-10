@@ -262,17 +262,20 @@ class SetupTools(commands.Cog):
 
         created_channels: dict[str, discord.abc.GuildChannel] = {}
         created_count = 0
+        created_ids: list[int] = []
         for category_name, channel_names in template["categories"].items():
             category = discord.utils.get(guild.categories, name=category_name)
             if category is None:
                 category = await guild.create_category(category_name, reason=f"{template['label']} template")
                 created_count += 1
+                created_ids.append(category.id)
             for channel_name in channel_names:
                 if category_name == "VOICE":
                     channel = discord.utils.get(category.voice_channels, name=channel_name)
                     if channel is None:
                         channel = await guild.create_voice_channel(channel_name, category=category, reason=f"{template['label']} template")
                         created_count += 1
+                        created_ids.append(channel.id)
                 else:
                     channel = discord.utils.get(category.text_channels, name=channel_name)
                     if channel is None:
@@ -283,6 +286,7 @@ class SetupTools(commands.Cog):
                             reason=f"{template['label']} template",
                         )
                         created_count += 1
+                        created_ids.append(channel.id)
                 created_channels[channel_name] = channel
 
         read_only_names = {"welcome", "rules", "announcements", "verify", "services", "status", "schedule", "lore", "marketplace-rules", "giveaways"}
@@ -323,10 +327,43 @@ class SetupTools(commands.Cog):
             "welcome_channel": welcome_channel.id if isinstance(welcome_channel, discord.TextChannel) else None,
             "ticket_channel": ticket_channel.id if isinstance(ticket_channel, discord.TextChannel) else None,
             "template": server_type.value,
+            "created_ids": created_ids,
         }
         await self.bot.db.set_settings_value(guild.id, "server_template", setup_data, self.bot.settings.default_prefix)
         result = await self.themed(guild.id, f"{template['label']} Template Ready", f"Added or refreshed the layout and starter panels. `{created_count}` categories/channels were newly created. Existing channels were kept.")
         await interaction.followup.send(embed=result, ephemeral=True)
+
+    @setup.command(name="template_preview", description="Preview a server template without changing anything")
+    @app_commands.choices(server_type=[app_commands.Choice(name=str(value["label"]), value=key) for key, value in SERVER_TEMPLATES.items()])
+    @app_admin()
+    async def setup_template_preview(self, interaction: discord.Interaction, server_type: app_commands.Choice[str]) -> None:
+        template = SERVER_TEMPLATES[server_type.value]
+        rows = []
+        for category_name, channels in template["categories"].items():
+            rows.append(f"**{category_name}**\n" + ", ".join(str(channel) for channel in channels))
+        description = str(template["description"]) + "\n\n" + "\n\n".join(rows)
+        await interaction.response.send_message(embed=await self.themed(interaction.guild_id, f"{template['label']} Template Preview", description[:4000]), ephemeral=True)
+
+    @setup.command(name="template_rollback", description="Remove only channels created by the last template run")
+    @app_admin()
+    async def setup_template_rollback(self, interaction: discord.Interaction, confirm: bool = False) -> None:
+        if not confirm:
+            await interaction.response.send_message("Run the command again with `confirm: True`. Only channels recorded from the latest template run will be removed.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
+        template_data = settings.get("server_template", {})
+        created_ids = {int(value) for value in template_data.get("created_ids", []) if str(value).isdigit()}
+        removed = 0
+        channels = [interaction.guild.get_channel(channel_id) for channel_id in created_ids]
+        for channel in sorted((item for item in channels if item is not None), key=lambda item: isinstance(item, discord.CategoryChannel)):
+            try:
+                await channel.delete(reason=f"Template rollback by {interaction.user}")
+                removed += 1
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+        await self.bot.db.set_settings_value(interaction.guild_id, "server_template", {}, self.bot.settings.default_prefix)
+        await interaction.followup.send(f"Rollback finished. Removed `{removed}` recorded channels/categories. Anything that existed before the template was kept.", ephemeral=True)
 
     @setup.command(name="bot_community", description="Build a compact AinBot promotion and support server")
     async def setup_bot_community(self, interaction: discord.Interaction) -> None:
@@ -467,6 +504,7 @@ class SetupTools(commands.Cog):
         await self.bot.db.set_settings_value(guild.id, "verify_role", roles["Verified"].id, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "verify_min_account_days", 3, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "stats_channels", stats_ids, self.bot.settings.default_prefix)
+        await self.bot.db.set_settings_value(guild.id, "ticket_system", {"category_id": support.id, "log_channel_id": staff_logs.id}, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "setup", {"logs_channel": staff_logs.id, "welcome_channel": welcome.id, "ticket_category": support.id, "backup_channel": updates.id, "payment_logs_channel": payment_logs.id}, self.bot.settings.default_prefix)
 
         async def post_once(channel: discord.TextChannel, title: str, description: str, view: discord.ui.View | None = None) -> None:
