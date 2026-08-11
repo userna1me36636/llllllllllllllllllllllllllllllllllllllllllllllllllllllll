@@ -147,6 +147,14 @@ class PanicPanel(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Shutdown", style=discord.ButtonStyle.danger)
+    async def shutdown(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_message(
+            embed=await self.cog.themed(interaction.guild_id, "Confirm Shutdown", "Press confirm only if you want Railway to stop this bot process."),
+            view=ConfirmActionView(self.cog, "shutdown", "Panic panel shutdown"),
+            ephemeral=True,
+        )
+
 
 class ManagementSuite(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -497,16 +505,6 @@ class ManagementSuite(commands.Cog):
         e.add_field(name="Load Issues", value=f"`{len(failed)}`" if failed else "`0`", inline=True)
         await interaction.response.send_message(embed=e, ephemeral=True)
 
-    @app_commands.command(name="updates", description="Show recent AinBot updates with dates and added features")
-    async def updates(self, interaction: discord.Interaction) -> None:
-        rows = await self.bot.db.fetchall("SELECT released_on,title,notes FROM bot_updates ORDER BY released_on DESC,id DESC LIMIT 10")
-        e = await self.themed(interaction.guild_id, "Recent AinBot Updates", "Newest updates are shown first.")
-        for row in rows:
-            e.add_field(name=f"{row['released_on']} — {row['title']}", value=str(row["notes"])[:1024], inline=False)
-        if not rows:
-            e.description = "No update history has been published yet."
-        await interaction.response.send_message(embed=e, ephemeral=True)
-
     @botctl.command(name="panic", description="OWNER_IDS only: open emergency bot controls")
     async def botctl_panic(self, interaction: discord.Interaction) -> None:
         if not await configured_owner(self.bot, interaction.user):
@@ -573,28 +571,28 @@ class ManagementSuite(commands.Cog):
             await interaction.response.send_message(embed=await self.themed(interaction.guild_id, "Owner Only"), ephemeral=True)
             return
         await self.bot.db.set_settings_value(interaction.guild_id, "bot_changelog", {"name": name[:80], "notes": notes[:3500]}, self.bot.settings.default_prefix)
-        released_on = discord.utils.utcnow().date().isoformat()
-        update_key = f"custom-{interaction.id}"
-        await self.bot.db.execute(
-            "INSERT OR IGNORE INTO bot_updates(update_key,released_on,title,notes,created_by) VALUES(?,?,?,?,?)",
-            update_key,
-            released_on,
-            name[:80],
-            notes[:3500],
-            interaction.user.id,
-        )
         await interaction.response.send_message(embed=await self.themed(interaction.guild_id, "Changelog Updated"), ephemeral=True)
 
-    @app_commands.command(name="ainsd", description="OWNER_IDS only: shut down every AinBot service")
-    async def ainsd(self, interaction: discord.Interaction, reason: str = "Owner requested shutdown") -> None:
-        owner_ids = getattr(self.bot.settings, "owner_ids", set())
-        if interaction.user.id not in owner_ids:
-            await interaction.response.send_message(embed=await self.themed(interaction.guild_id, "Owner ID Only", "Your Discord ID is not saved in AinBot's Owner IDs list."), ephemeral=True)
+    @botctl.command(name="shutdown", description="OWNER_IDS only: shut down the bot process")
+    async def botctl_shutdown(self, interaction: discord.Interaction, reason: str = "Owner requested shutdown") -> None:
+        if not await configured_owner(self.bot, interaction.user):
+            await interaction.response.send_message(embed=await self.themed(interaction.guild_id, "Owner Only"), ephemeral=True)
             return
         await interaction.response.send_message(
-            embed=await self.themed(interaction.guild_id, "Confirm AinBot Shutdown", "This disconnects the bot, stops background tasks, music helpers and the dashboard process. Press Confirm to continue."),
+            embed=await self.themed(interaction.guild_id, "Confirm Shutdown", "This will stop the bot process. Press Confirm to continue."),
             view=ConfirmActionView(self, "shutdown", reason),
             ephemeral=True,
+        )
+
+    @commands.command(name="shutdownbot", aliases=["botshutdown"], hidden=True)
+    async def prefix_shutdownbot(self, ctx: commands.Context, *, reason: str = "Owner requested shutdown") -> None:
+        if not await configured_owner(self.bot, ctx.author):
+            await ctx.reply(embed=await self.themed(ctx.guild.id if ctx.guild else None, "Owner Only"), mention_author=False)
+            return
+        await ctx.reply(
+            embed=await self.themed(ctx.guild.id if ctx.guild else None, "Confirm Shutdown", "This will stop the bot process. Press Confirm to continue."),
+            view=ConfirmActionView(self, "shutdown", reason),
+            mention_author=False,
         )
 
     @commands.command(name="checklist")

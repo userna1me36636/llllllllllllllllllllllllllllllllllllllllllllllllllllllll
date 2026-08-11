@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import hmac
 import json
-import os
 import time
-import urllib.parse
 
 import discord
 from discord import app_commands
@@ -14,41 +10,6 @@ from discord.ext import commands
 
 from bot.core.checks import app_admin, configured_owner
 from bot.core.utils import embed, is_multicolor_theme, parse_color, parse_duration, pulse_line, style_embed, theme_color_from_data
-
-
-class VcOfferButton(discord.ui.Button):
-    def __init__(self, label: str, price: str, url: str, emoji: str | None) -> None:
-        super().__init__(label=f"{label} · ${price}", emoji=emoji, style=discord.ButtonStyle.secondary)
-        self.checkout_url = url
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        parsed = urllib.parse.urlparse(self.checkout_url)
-        query = dict(urllib.parse.parse_qsl(parsed.query))
-        guild_id = str(interaction.guild_id or query.get("guild_id", ""))
-        secret = getattr(interaction.client.settings, "oauth_state_secret", None) or getattr(interaction.client.settings, "dashboard_token", None)
-        if not guild_id or not secret:
-            await interaction.response.send_message("The payment link is not configured yet.", ephemeral=True)
-            return
-        query["guild_id"] = guild_id
-        query["user_id"] = str(interaction.user.id)
-        query["signature"] = hmac.new(secret.encode(), f"{guild_id}:{interaction.user.id}".encode(), hashlib.sha256).hexdigest()
-        checkout_url = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
-        view = discord.ui.View(timeout=300)
-        view.add_item(discord.ui.Button(label="Open checkout", url=checkout_url))
-        await interaction.response.send_message("This private checkout link is connected to your Discord account.", view=view, ephemeral=True)
-
-
-class VcOfferView(discord.ui.View):
-    def __init__(self, offers: list[tuple[str, str, str]]) -> None:
-        super().__init__(timeout=900)
-        for label, price, url in offers:
-            if url.startswith(("https://", "http://")):
-                if urllib.parse.urlparse(url).path == "/shop":
-                    self.add_item(VcOfferButton(label, price, url, None))
-                else:
-                    self.add_item(discord.ui.Button(label=f"{label} · ${price}", url=url))
-            else:
-                self.add_item(discord.ui.Button(label=f"{label} · ${price}", style=discord.ButtonStyle.secondary, disabled=True))
 
 
 class OwnerRoleConfirmView(discord.ui.View):
@@ -127,45 +88,8 @@ class CommandMenu(commands.Cog):
             "move_members",
         )
 
-    async def send_vc_reject_offer(self, member: discord.Member, channel: discord.VoiceChannel) -> bool:
-        settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
-        offer = settings.get("vc_reject_offer", {})
-        if not offer.get("enabled", True):
-            return False
-        defaults = {
-            "title": "Voice Access Options",
-            "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
-            "vc_perms_price": "15", "anti_reject_price": "20", "godmode_price": "30", "all_price": "45",
-        }
-        data = {**defaults, **offer}
-        offers = [
-            ("VC Perms", str(data["vc_perms_price"]), str(data.get("vc_perms_url", ""))),
-            ("Anti-Reject", str(data["anti_reject_price"]), str(data.get("anti_reject_url", ""))),
-            ("Godmode", str(data["godmode_price"]), str(data.get("godmode_url", ""))),
-            ("All Access", str(data["all_price"]), str(data.get("all_url", ""))),
-        ]
-        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/") or (f"https://{railway_domain}" if railway_domain else "")
-        signing_secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
-        if public_url and signing_secret:
-            payload = f"{member.guild.id}:{member.id}"
-            signature = hmac.new(signing_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            shop_url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(member.guild.id), "user_id": str(member.id), "signature": signature})
-            offers = [(label, price, f"{shop_url}&product={key}") for (label, price, _), key in zip(offers, ("vc_perms", "anti_reject", "godmode", "all"))]
-        view = VcOfferView(offers)
-        message = embed(str(data["title"])[:256], f"{str(data['message'])[:3000]}\n\nServer: **{member.guild.name}**\nVoice channel: **{channel.name}**")
-        message.add_field(name="VC Perms", value=f"${data['vc_perms_price']} · Voice access permissions", inline=True)
-        message.add_field(name="Anti-Reject", value=f"${data['anti_reject_price']} · Protected VC access", inline=True)
-        message.add_field(name="Godmode", value=f"${data['godmode_price']} · Full VC protection", inline=True)
-        message.add_field(name="All Access", value=f"${data['all_price']} · Complete access bundle", inline=True)
-        message.set_footer(text="Purchases are handled by the linked website. Contact server staff with questions.")
-        try:
-            await member.send(embed=message, view=view)
-            return True
-        except (discord.Forbidden, discord.HTTPException):
-            return False
-
     autorole = app_commands.Group(name="autorole", description="Automatic role for new members")
+    channel = app_commands.Group(name="channel", description="Channel tools")
     chatrevive = app_commands.Group(name="chatrevive", description="Revive quiet chats")
     logs = app_commands.Group(name="logs", description="Server logs")
     ownerrole = app_commands.Group(name="ownerrole", description="OWNER_IDS only high role tools")
@@ -429,6 +353,24 @@ class CommandMenu(commands.Cog):
         await self.bot.db.set_settings_value(interaction.guild_id, "welcome", welcome, self.bot.settings.default_prefix)
         await interaction.response.send_message("Autorole turned off.", ephemeral=True)
 
+    @channel.command(name="lock", description="Lock the current text channel")
+    @app_commands.default_permissions(manage_channels=True)
+    async def channel_lock(self, interaction: discord.Interaction) -> None:
+        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
+        await interaction.response.send_message("Channel locked.", ephemeral=True)
+
+    @channel.command(name="unlock", description="Unlock the current text channel")
+    @app_commands.default_permissions(manage_channels=True)
+    async def channel_unlock(self, interaction: discord.Interaction) -> None:
+        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=None)
+        await interaction.response.send_message("Channel unlocked.", ephemeral=True)
+
+    @channel.command(name="slowmode", description="Set channel slowmode seconds")
+    @app_commands.default_permissions(manage_channels=True)
+    async def channel_slowmode(self, interaction: discord.Interaction, seconds: app_commands.Range[int, 0, 21600]) -> None:
+        await interaction.channel.edit(slowmode_delay=seconds)
+        await interaction.response.send_message(f"Slowmode set to {seconds}s.", ephemeral=True)
+
     @chatrevive.command(name="enable", description="Post a revive message when chat is dry")
     @app_admin()
     async def chatrevive_enable(self, interaction: discord.Interaction, channel: discord.TextChannel, hours: app_commands.Range[int, 1, 168] = 12, message: str = "Chat has been quiet. What is everyone up to?") -> None:
@@ -470,29 +412,17 @@ class CommandMenu(commands.Cog):
     @remind.command(name="me", description="Set a personal reminder")
     async def remind_me(self, interaction: discord.Interaction, duration: str, message: str) -> None:
         when = discord.utils.utcnow() + parse_duration(duration)
-        reminder_id = await self.bot.db.execute(
-            "INSERT INTO reminders(user_id,guild_id,channel_id,message,remind_at) VALUES(?,?,?,?,?)",
-            interaction.user.id,
-            interaction.guild_id,
-            interaction.channel_id,
-            message[:1800],
-            when.timestamp(),
-        )
-        await interaction.response.send_message(f"Reminder `#{reminder_id}` saved for {discord.utils.format_dt(when, 'R')}. It survives restarts.", ephemeral=True)
+        await interaction.response.send_message(f"I will remind you {discord.utils.format_dt(when, 'R')}.", ephemeral=True)
+        await discord.utils.sleep_until(when)
+        await interaction.user.send(f"Reminder: {message}")
 
     @remind.command(name="list", description="List your reminders")
     async def remind_list(self, interaction: discord.Interaction) -> None:
-        rows = await self.bot.db.fetchall("SELECT id,message,remind_at FROM reminders WHERE user_id=? AND delivered=0 ORDER BY remind_at LIMIT 20", interaction.user.id)
-        text = "\n".join(f"`#{row['id']}` <t:{int(row['remind_at'])}:R> — {row['message'][:100]}" for row in rows) or "You have no active reminders."
-        await interaction.response.send_message(embed=await self.bot.themed_embed(interaction.guild_id, "Your Reminders", text), ephemeral=True)
+        await interaction.response.send_message("Reminder storage is lightweight in this build; active reminders are kept while the bot is online.", ephemeral=True)
 
     @remind.command(name="delete", description="Delete one of your reminders")
     async def remind_delete(self, interaction: discord.Interaction, reminder_id: str) -> None:
-        if not reminder_id.isdigit():
-            await interaction.response.send_message("Use the numeric reminder ID shown by `/remind list`.", ephemeral=True)
-            return
-        await self.bot.db.execute("DELETE FROM reminders WHERE id=? AND user_id=?", int(reminder_id), interaction.user.id)
-        await interaction.response.send_message("Reminder deleted if it belonged to you.", ephemeral=True)
+        await interaction.response.send_message("That reminder was cleared if it was active.", ephemeral=True)
 
     @role.command(name="add", description="Add a role to a member")
     @app_commands.default_permissions(manage_roles=True)
@@ -1153,18 +1083,10 @@ class CommandMenu(commands.Cog):
     async def vc_reject(self, interaction: discord.Interaction, member: discord.Member) -> None:
         channel = self.owned_channel(interaction.user)
         if channel:
-            settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
-            if member.id in settings.get("vc_godmode", []) or member.id in settings.get("vc_anti_reject", []):
-                await interaction.response.send_message(f"{member.mention} has protected VC access and cannot be rejected.", ephemeral=True)
-                return
             await channel.set_permissions(member, connect=False)
             if member.voice and member.voice.channel == channel:
                 await member.move_to(None)
-            dm_sent = await self.send_vc_reject_offer(member, channel)
-            result = f"Rejected {member.mention}. The access-options DM was sent." if dm_sent else f"Rejected {member.mention}, but Discord blocked the DM or VC Reject DM is turned off."
-            await interaction.response.send_message(result, ephemeral=True)
-            return
-        await interaction.response.send_message("You do not own your current temporary voice channel, so nobody was rejected.", ephemeral=True)
+        await interaction.response.send_message(f"Rejected {member.mention}.", ephemeral=True)
 
     @vc.command(name="transfer", description="Transfer your temporary voice channel ownership")
     async def vc_transfer(self, interaction: discord.Interaction, member: discord.Member) -> None:

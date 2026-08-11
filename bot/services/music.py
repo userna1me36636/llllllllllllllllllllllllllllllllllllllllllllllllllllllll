@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import os
 import shutil
 import tempfile
@@ -19,15 +18,6 @@ FFMPEG_OPTS = {
 }
 
 
-def youtube_cookies_configured() -> bool:
-    cookie_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
-    return bool(
-        (cookie_file and Path(cookie_file).is_file())
-        or os.getenv("YTDLP_COOKIES_TEXT", "").strip()
-        or os.getenv("YTDLP_COOKIES_BASE64", "").strip()
-    )
-
-
 def ytdl_options() -> dict:
     opts = {
         "format": os.getenv("YTDLP_FORMAT", "ba[ext=m4a]/ba[acodec^=mp4a]/bestaudio/best"),
@@ -36,28 +26,15 @@ def ytdl_options() -> dict:
         "default_search": os.getenv("YTDLP_SEARCH_PROVIDER", "ytsearch"),
         "extract_flat": False,
         "js_runtimes": {"deno": {}},
+        "extractor_args": {"youtube": {"player_client": ["default", "ios"]}},
     }
-    cookie_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
-    cookie_text = os.getenv("YTDLP_COOKIES_TEXT", "").strip()
-    cookie_base64 = os.getenv("YTDLP_COOKIES_BASE64", "").strip()
-    if cookie_file and Path(cookie_file).is_file():
+    cookie_file = os.getenv("YTDLP_COOKIES_FILE")
+    cookie_text = os.getenv("YTDLP_COOKIES_TEXT")
+    if cookie_file:
         opts["cookiefile"] = cookie_file
-    elif cookie_base64 or cookie_text:
+    elif cookie_text:
         path = Path(tempfile.gettempdir()) / "yt-dlp-cookies.txt"
-        if cookie_base64:
-            try:
-                contents = base64.b64decode(cookie_base64, validate=True).decode("utf-8-sig")
-            except (ValueError, UnicodeDecodeError) as exc:
-                raise RuntimeError("YTDLP_COOKIES_BASE64 is not valid base64-encoded UTF-8 cookies.txt data.") from exc
-        else:
-            contents = cookie_text.strip('"\'').replace("\\r\\n", "\n").replace("\\n", "\n")
-        if "# Netscape HTTP Cookie File" not in contents and not contents.lstrip().startswith("# HTTP Cookie File"):
-            raise RuntimeError("YouTube cookies must use Netscape cookies.txt format.")
-        path.write_text(contents.replace("\r\n", "\n"), encoding="utf-8")
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+        path.write_text(cookie_text.replace("\\n", "\n"), encoding="utf-8")
         opts["cookiefile"] = str(path)
     return opts
 
@@ -96,7 +73,6 @@ class Track:
     uploader: str | None = None
     thumbnail: str | None = None
     view_count: int | None = None
-    fallback_used: bool = False
 
 
 class GuildPlayer:
@@ -109,14 +85,9 @@ class GuildPlayer:
         self.volume = 0.6
 
     async def resolve(self, query: str, requester_id: int) -> list[Track]:
-        cleaned_query = query.strip()
-        lookup = cleaned_query
-        if not cleaned_query.lower().startswith(("http://", "https://")) and not youtube_cookies_configured():
-            lookup = f"scsearch1:{cleaned_query}"
-
         def run() -> dict:
             with yt_dlp.YoutubeDL(ytdl_options()) as ytdl:
-                return ytdl.extract_info(lookup, download=False)
+                return ytdl.extract_info(query, download=False)
 
         data = await asyncio.to_thread(run)
         entries = data.get("entries") or [data]
@@ -128,7 +99,7 @@ class GuildPlayer:
                 Track(
                     item.get("title", "Unknown track"),
                     item["url"],
-                    item.get("webpage_url", cleaned_query),
+                    item.get("webpage_url", query),
                     requester_id,
                     item.get("duration"),
                     None,
@@ -162,36 +133,12 @@ class GuildPlayer:
         track.local_path = await asyncio.to_thread(run)
         return track.local_path
 
-    async def switch_to_soundcloud(self, track: Track) -> bool:
-        if track.fallback_used:
-            return False
-
-        def run() -> dict | None:
-            opts = ytdl_options()
-            opts.update({"noplaylist": True, "quiet": True})
-            with yt_dlp.YoutubeDL(opts) as ytdl:
-                data = ytdl.extract_info(f"scsearch1:{track.title}", download=False)
-            entries = data.get("entries") or []
-            return next((entry for entry in entries if entry and entry.get("url")), None)
-
-        info = await asyncio.to_thread(run)
-        track.fallback_used = True
-        if not info:
-            return False
-        track.url = info["url"]
-        track.webpage_url = info.get("webpage_url") or info.get("original_url") or track.webpage_url
-        track.duration = info.get("duration") or track.duration
-        track.uploader = info.get("uploader") or track.uploader
-        track.thumbnail = info.get("thumbnail") or track.thumbnail
-        track.local_path = None
-        return True
-
     def source(self, track: Track, mode: int = 0) -> discord.AudioSource:
         options = "-vn -loglevel warning"
         before_options = FFMPEG_OPTS["before_options"]
         if mode >= 2:
             before_options = "-nostdin"
-        source_url = track.local_path if track.local_path else track.url
+        source_url = track.local_path if mode >= 3 and track.local_path else track.url
         if track.local_path:
             before_options = "-nostdin"
         if mode == 0:

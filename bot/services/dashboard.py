@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import html
-import hashlib
-import hmac
+import asyncio
 import json
 import os
-import secrets
-import sqlite3
 import tempfile
 import time
-import urllib.parse
 from typing import Any
 import datetime as dt
 from pathlib import Path
 
 import discord
-from aiohttp import BasicAuth, ClientSession, web
+import edge_tts
+from aiohttp import ClientSession, web
 from discord.ext import commands
 
 from bot.cogs.server_backup import make_code
@@ -31,71 +28,63 @@ def dashboard_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AinBot Control</title>
   <style>
-    :root { color-scheme:dark; --bg:#111210; --surface:#191a17; --raised:#20211e; --line:#34362f; --text:#f3f1e8; --muted:#aaa99f; --accent:#ff7043; --accent-soft:#35221b; --success:#9fcf63; }
+    :root { color-scheme: dark; --bg:#07070b; --panel:rgba(255,255,255,.075); --line:rgba(255,255,255,.22); --red:rgba(178,24,44,.42); --text:#f7f2f5; --muted:#d7ccd7; --hot:#ff4f73; --a:#ff3864; --b:#8f5cff; --c:#20d3ff; --d:#42ff9e; }
     * { box-sizing:border-box; }
-    html { scroll-behavior:smooth; }
-    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:"Segoe UI",Arial,sans-serif; overflow-x:hidden; }
-    body::before { content:""; position:fixed; left:0; top:0; bottom:0; width:5px; background:var(--accent); z-index:20; }
-    .wrap { width:min(1240px,calc(100% - 40px)); margin:0 auto; padding:38px 0 56px; }
-    header { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; margin-bottom:28px; padding-bottom:22px; border-bottom:1px solid var(--line); }
-    h1 { margin:0; font-size:clamp(34px,5vw,62px); line-height:.95; letter-spacing:-.055em; font-weight:760; }
-    h2 { margin:0 0 16px; font-size:18px; letter-spacing:-.015em; }
-    p { color:var(--muted); line-height:1.55; }
-    header p { max-width:600px; margin:10px 0 0; }
-    .brand { color:var(--accent); font-size:11px; margin-top:12px; letter-spacing:.14em; text-transform:uppercase; }
-    .grid { display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px; align-items:start; }
-    .panel { border:1px solid var(--line); background:var(--surface); border-radius:16px; padding:18px; box-shadow:0 18px 50px rgba(0,0,0,.18); }
-    .grid > section.panel { position:sticky; top:18px; }
-    .card { border:1px solid var(--line); background:var(--raised); border-radius:12px; padding:16px; margin-top:12px; }
-    label { display:block; color:var(--muted); font-size:11px; font-weight:650; letter-spacing:.055em; text-transform:uppercase; margin:14px 0 7px; }
-    input,select,textarea { width:100%; border:1px solid var(--line); background:#141512; color:var(--text); border-radius:9px; padding:11px 12px; outline:none; font:inherit; transition:border-color .16s ease,box-shadow .16s ease,background .16s ease; }
-    input:focus,select:focus,textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(255,112,67,.12); background:#181916; }
-    .select-search { margin:0 0 6px; background:#171815; }
-    option { background:#171815; color:var(--text); }
-    button,a.button { border:1px solid var(--line); background:#292a26; color:var(--text); border-radius:9px; padding:10px 13px; cursor:pointer; font-weight:650; transition:transform .14s ease,border-color .14s ease,background .14s ease; }
-    button:hover,a.button:hover { border-color:#686a60; background:#30312c; transform:translateY(-1px); }
-    button:active,a.button:active { transform:translateY(0); }
-    button:focus-visible,a.button:focus-visible { outline:3px solid rgba(255,112,67,.25); outline-offset:2px; }
-    button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+    body { margin:0; min-height:100vh; background:linear-gradient(125deg,#09070d,#1b0820,#071827,#10110a,#220811); background-size:520% 520%; color:var(--text); font-family:Inter,Segoe UI,Arial,sans-serif; animation:auroraShift 28s ease-in-out infinite; position:relative; overflow-x:hidden; }
+    body::before { content:""; position:fixed; inset:-18%; pointer-events:none; background:radial-gradient(circle at 15% 20%, rgba(255,56,100,.42), transparent 28%), radial-gradient(circle at 78% 12%, rgba(143,92,255,.38), transparent 30%), radial-gradient(circle at 88% 72%, rgba(32,211,255,.3), transparent 28%), radial-gradient(circle at 18% 84%, rgba(66,255,158,.2), transparent 30%); filter:blur(20px); opacity:.75; animation:glowDrift 34s ease-in-out infinite alternate; }
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size:42px 42px; mask-image:linear-gradient(to bottom, rgba(0,0,0,.72), transparent 85%); }
+    @keyframes auroraShift { 0%{background-position:0% 50%;} 33%{background-position:80% 20%;} 66%{background-position:20% 90%;} 100%{background-position:0% 50%;} }
+    @keyframes glowDrift { 0%{transform:translate3d(-2%, -1%, 0) rotate(0deg) scale(1);} 50%{transform:translate3d(2%, 2%, 0) rotate(8deg) scale(1.05);} 100%{transform:translate3d(0, -2%, 0) rotate(-6deg) scale(1.02);} }
+    @keyframes borderPulse { 0%,100%{border-color:rgba(255,255,255,.2); box-shadow:0 20px 80px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.14);} 50%{border-color:rgba(143,92,255,.52); box-shadow:0 20px 90px rgba(32,211,255,.14), inset 0 1px 0 rgba(255,255,255,.22);} }
+    .wrap { width:min(1180px, calc(100% - 28px)); margin:0 auto; padding:28px 0; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-bottom:18px; }
+    h1 { margin:0; font-size:clamp(30px,5vw,58px); letter-spacing:0; }
+    h2 { margin:0 0 12px; font-size:20px; }
+    p { color:var(--muted); line-height:1.5; }
+    .grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; align-items:start; }
+    .panel { border:1px solid var(--line); background:linear-gradient(145deg,rgba(255,56,100,.18),rgba(143,92,255,.13),rgba(32,211,255,.08),rgba(255,255,255,.05)); backdrop-filter:blur(18px) saturate(140%); border-radius:8px; padding:16px; animation:borderPulse 12s ease-in-out infinite; position:relative; z-index:1; }
+    .card { border:1px solid rgba(255,255,255,.16); background:linear-gradient(145deg,rgba(0,0,0,.38),rgba(255,255,255,.06)); border-radius:8px; padding:12px; margin-top:10px; box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
+    label { display:block; color:var(--muted); font-size:12px; margin:12px 0 6px; }
+    input, select { width:100%; border:1px solid rgba(255,255,255,.2); background:#171017; color:var(--text); border-radius:8px; padding:11px 12px; outline:none; }
+    option { background:#171017; color:#f7f2f5; }
+    option:checked, option:hover { background:#b2182c; color:#fff; }
+    button { border:1px solid rgba(255,255,255,.28); background:linear-gradient(135deg,rgba(255,56,100,.22),rgba(143,92,255,.18),rgba(32,211,255,.13)); color:var(--text); border-radius:8px; padding:10px 12px; cursor:pointer; box-shadow:inset 0 1px 0 rgba(255,255,255,.14); }
+    button:hover { border-color:var(--hot); }
     .row { display:flex; gap:8px; }
-    .row > * { flex:1; min-width:0; }
-    .pill { display:inline-flex; border:1px solid #554037; border-radius:999px; padding:6px 10px; margin:3px; color:#ffd8ca; background:var(--accent-soft); font-size:12px; }
-    .cmd { display:grid; grid-template-columns:minmax(130px,220px) 1fr; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
+    .row > * { flex:1; }
+    .pill { display:inline-flex; border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:6px 9px; margin:3px; color:#fff; background:linear-gradient(135deg,rgba(255,56,100,.18),rgba(32,211,255,.12)); font-size:12px; }
+    .cmd { display:grid; grid-template-columns: minmax(130px, 220px) 1fr; gap:10px; padding:10px 0; border-bottom:1px solid rgba(255,255,255,.11); }
     .cmd:last-child { border-bottom:0; }
-    .cmd b { color:var(--text); }
+    .cmd b { color:#fff; }
     .cmd span { color:var(--muted); }
-    .status { min-height:22px; color:var(--success); font-size:13px; }
-    .stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
-    .stat { border:1px solid var(--line); border-radius:10px; padding:13px; background:#181916; }
-    .stat b { display:block; font-size:24px; letter-spacing:-.04em; }
-    .stat span { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
-    textarea { min-height:92px; resize:vertical; }
+    .status { min-height:22px; color:#ffd0dc; font-size:13px; }
+    .brand { color:#ffd8e2; font-size:13px; margin-top:6px; }
+    .stats { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-top:10px; }
+    .stat { border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:10px; background:rgba(255,255,255,.06); }
+    .stat b { display:block; font-size:22px; }
+    .stat span { color:var(--muted); font-size:12px; }
+    textarea { width:100%; min-height:92px; resize:vertical; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:var(--text); border-radius:8px; padding:11px 12px; outline:none; font:inherit; }
     .wide { grid-column:1 / -1; }
-    .tabs { display:flex; flex-wrap:wrap; gap:5px; overflow:visible; padding:0 0 14px; margin-bottom:2px; border-bottom:1px solid var(--line); }
-    .tab-button { white-space:nowrap; background:transparent; color:var(--muted); border-color:transparent; border-radius:7px; }
-    .tab-button:hover { transform:none; background:#252621; }
-    .tab-button.active { color:var(--text); border-color:#684032; background:var(--accent-soft); }
-    .tab-panel { display:none; }
-    .tab-panel.active { display:block; animation:panelIn .2s ease-out; }
-    @keyframes panelIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
-    .notice { border-left:3px solid var(--accent); border-radius:4px; padding:10px 12px; background:var(--accent-soft); color:#d6c1b8; }
-    .guide-list { display:grid; gap:9px; margin:12px 0 0; padding:0; list-style:none; counter-reset:guide; }
-    .guide-list li { position:relative; padding:12px 12px 12px 46px; border:1px solid var(--line); border-radius:10px; background:#181916; color:var(--muted); line-height:1.5; }
-    .guide-list li::before { counter-increment:guide; content:counter(guide); position:absolute; left:12px; top:11px; width:24px; height:24px; display:grid; place-items:center; border-radius:7px; background:var(--accent-soft); color:var(--accent); font-weight:750; }
-    .guide-list b { color:var(--text); }
-    .defense-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
-    .defense-grid .card { margin:0; }
-    .owner-entry { display:flex; align-items:center; gap:9px; padding:9px 0; border-bottom:1px solid var(--line); }
-    .owner-entry:last-child { border-bottom:0; }
-    .owner-entry > div { min-width:0; flex:1; }
-    .owner-entry b,.owner-entry span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .owner-entry span { color:var(--muted); font-size:11px; margin-top:2px; }
-    .owner-entry button { flex:0 0 auto; padding:7px 9px; color:#ffc1ae; }
-    .metric { font-size:34px; font-weight:750; display:block; }
-    a.button { display:inline-block; text-decoration:none; text-align:center; }
-    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation:none!important; transition:none!important; } }
-    @media (max-width:840px) { .wrap{width:min(100% - 22px,1240px);padding-top:22px}.grid{grid-template-columns:1fr}.grid > section.panel{position:static}header{align-items:flex-start} }
-    @media (max-width:560px) { header{display:block}header>button{margin-top:16px}.row{flex-direction:column}.cmd{grid-template-columns:1fr}.defense-grid{grid-template-columns:1fr}.panel{padding:14px;border-radius:13px} }
+    .tabs { display:flex; gap:8px; margin:0 0 16px; overflow-x:auto; position:relative; z-index:2; }
+    .tabs button.active { border-color:var(--hot); background:linear-gradient(135deg,rgba(255,56,100,.55),rgba(143,92,255,.35)); }
+    .tabpage { display:none; }
+    .tabpage.active { display:grid; }
+    .tts-layout { grid-template-columns:minmax(0,1fr) 320px; gap:16px; }
+    .slider-line { display:grid; grid-template-columns:90px 1fr 54px; align-items:center; gap:10px; }
+    .slider-line output { text-align:right; color:var(--muted); }
+    .connection { display:flex; align-items:center; gap:8px; color:var(--muted); }
+    .connection::before { content:""; width:10px; height:10px; border-radius:50%; background:#777; box-shadow:0 0 12px #777; }
+    .connection.online::before { background:var(--d); box-shadow:0 0 14px var(--d); }
+    .designer { grid-template-columns:minmax(320px, .9fr) minmax(360px, 1.1fr); gap:16px; }
+    .discord-preview { background:#313338; border-radius:8px; padding:18px; min-height:360px; }
+    .discord-message { display:grid; grid-template-columns:42px 1fr; gap:12px; }
+    .discord-avatar { width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,var(--a),var(--b),var(--c)); }
+    .discord-name { color:#f2f3f5; font-weight:700; margin-bottom:6px; }.discord-name small{color:#949ba4;font-weight:400}
+    .embed-preview { border-left:4px solid var(--hot); background:#2b2d31; border-radius:4px; padding:12px 14px; max-width:560px; color:#dbdee1; }
+    .embed-preview h3 { color:#f2f3f5; margin:0 0 8px; }.embed-preview p{margin:0 0 10px;color:#dbdee1}.preview-field{margin-top:9px}.preview-field b{display:block;color:#f2f3f5}.preview-field span{white-space:pre-wrap}.preview-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.preview-footer{margin-top:12px;color:#949ba4;font-size:11px}
+    button.danger { border-color:rgba(255,79,115,.65); }
+    @media (prefers-reduced-motion: reduce) { body, body::before, .panel { animation:none; } }
+    @media (max-width: 820px) { .grid, .tts-layout, .designer { grid-template-columns:1fr; } header { display:block; } .row { flex-wrap:wrap; } .slider-line { grid-template-columns:70px 1fr 46px; } .preview-cards{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
@@ -108,26 +97,21 @@ def dashboard_html() -> str:
       </div>
       <button onclick="loadGuilds()">Refresh</button>
     </header>
-    <div class="grid">
+    <nav class="tabs" aria-label="Dashboard sections">
+      <button class="active" data-tab="dashboardTab" onclick="showTab('dashboardTab',this)">Dashboard</button>
+      <button data-tab="ttsTab" onclick="showTab('ttsTab',this)">Text to Speech</button>
+      <button data-tab="panelTab" onclick="showTab('panelTab',this)">Panel Designer</button>
+    </nav>
+    <div id="dashboardTab" class="grid tabpage active">
       <section class="panel">
         <h2>Connect</h2>
         <label>Dashboard token</label>
         <input id="token" placeholder="DASHBOARD_TOKEN" type="password">
-        <a class="button" href="/oauth/dashboard/start">Sign in with Discord</a>
-        <p>Owners can sign in with Discord. The token remains available for emergency access.</p>
         <label>Server</label>
         <select id="guilds" onchange="loadSummary()"></select>
         <div class="row">
           <button onclick="loadGuilds()">Load Servers</button>
           <button onclick="loadCommands()">Commands</button>
-        </div>
-        <div class="card" data-stay="true">
-          <h2>Owner IDs</h2>
-          <p>Bot owners stay available on every tab.</p>
-          <div id="ownerIdsList"><p>Enter the dashboard token to load owners.</p></div>
-          <label>Add owner ID</label>
-          <input id="newOwnerId" inputmode="numeric" placeholder="Discord user ID">
-          <button onclick="addOwnerId()">Add Owner ID</button>
         </div>
         <div class="card">
           <h2>Quick Controls</h2>
@@ -138,29 +122,7 @@ def dashboard_html() -> str:
           <label>Feature</label>
           <div class="row"><input id="feature" placeholder="music"><button onclick="feature(true)">On</button><button onclick="feature(false)">Off</button></div>
         </div>
-        <div class="card">
-          <h2>Bot Voice</h2>
-          <label>Voice channel</label>
-          <select id="voiceChannels"></select>
-          <div class="row"><button onclick="joinVoice()">Join VC</button><button onclick="leaveVoice()">Leave VC</button></div>
-          <label>Type to talk in VC</label>
-          <textarea id="ttsText" maxlength="900" placeholder="Type what the bot should say in voice..."></textarea>
-          <label>Voice style</label>
-          <select id="ttsVoice"><option value="alloy">Alloy</option><option value="verse">Verse</option><option value="nova">Nova</option><option value="shimmer">Shimmer</option><option value="echo">Echo</option></select>
-          <button onclick="speakVoice()">Speak In VC</button>
-        </div>
-        <div class="card">
-          <h2>VC Reject DM</h2>
-          <p>When <code>/vc reject</code> removes someone, the bot sends this offer to their DMs. Buttons open the links you set.</p>
-          <label>Send the DM</label><select id="vcOfferEnabled"><option value="true">On</option><option value="false">Off</option></select>
-          <label>DM title</label><input id="vcOfferTitle" maxlength="256" placeholder="Voice Access Options">
-          <label>DM message</label><textarea id="vcOfferMessage" maxlength="3000" placeholder="Explain the access options…"></textarea>
-          <div class="row"><div><label>VC Perms price</label><input id="vcPermsPrice" type="number" min="0" step="0.01" value="15"></div><div><label>VC Perms link</label><input id="vcPermsUrl" type="url" placeholder="https://..."></div></div>
-          <div class="row"><div><label>Anti-Reject price</label><input id="antiRejectPrice" type="number" min="0" step="0.01" value="20"></div><div><label>Anti-Reject link</label><input id="antiRejectUrl" type="url" placeholder="https://..."></div></div>
-          <div class="row"><div><label>Godmode price</label><input id="godmodePrice" type="number" min="0" step="0.01" value="30"></div><div><label>Godmode link</label><input id="godmodeUrl" type="url" placeholder="https://..."></div></div>
-          <div class="row"><div><label>All Access price</label><input id="allAccessPrice" type="number" min="0" step="0.01" value="45"></div><div><label>All Access link</label><input id="allAccessUrl" type="url" placeholder="https://..."></div></div>
-          <button onclick="saveVcOffer()">Save VC Reject DM</button>
-        </div>
+        <select id="voiceChannels" hidden></select>
         <div class="card">
           <h2>Bot Chat</h2>
           <label>Text channel</label>
@@ -242,130 +204,80 @@ def dashboard_html() -> str:
           <button onclick="loadLogs()">Refresh Logs</button>
           <div id="logsBox"></div>
         </div>
-        <div class="card" id="memberTransferCard">
-          <h2>Member Transfer</h2>
-          <p class="notice">Only people who explicitly authorize AIN can be added. This tool never scrapes user tokens or forces anyone into a server.</p>
-          <div class="row">
-            <div><label>Source server</label><select id="transferSource" onchange="loadTransferStatus()"></select></div>
-            <div><label>Destination server</label><select id="transferDestination" onchange="loadTransferStatus()"></select></div>
-          </div>
-          <div class="stats">
-            <div class="stat"><b id="authorizedCount">0</b><span>authorized users</span></div>
-            <div class="stat"><b id="eligibleCount">0</b><span>eligible to add</span></div>
-          </div>
-          <label>Authorization link for members</label>
-          <div class="row"><a class="button" href="/oauth/discord/start" target="_blank" rel="noopener">Authorize with Discord</a><button onclick="copyAuthorizationLink()">Copy Authorization Link</button></div>
-          <label>Admin actions</label>
-          <div class="row"><button onclick="addAuthorizedMembers()">Add Authorized Members</button><button onclick="createInvite()">Create Invite</button><button id="copyInviteButton" onclick="copyInvite()" disabled>Copy Invite</button></div>
-          <input id="inviteUrl" readonly placeholder="Invite link appears here">
-          <div id="transferResult"></div>
-        </div>
-        <div class="card" id="commandCatalogCard">
-          <h2>All Commands</h2>
-          <p>Every slash and prefix command currently loaded by the bot. Search by command name, feature, or a word from its description.</p>
-          <div class="row"><input id="commandCatalogSearch" type="search" placeholder="Search commands, such as tickets, music, lock, roles…" oninput="filterCommandCatalog()"><button onclick="loadCommandCatalog()">Refresh List</button></div>
-          <div class="stats"><div class="stat"><b id="commandCatalogCount">0</b><span>matching commands</span></div><div class="stat"><b id="commandCatalogTotal">0</b><span>total commands</span></div></div>
-          <div id="commandCatalogResults"></div>
-        </div>
-        <div class="card" id="defenseCenterCard">
-          <h2>Defense Center</h2>
-          <p class="notice">Start here before inviting the public. The bot needs Manage Channels, Manage Roles, Moderate Members, Kick Members, Ban Members, View Audit Log, and Manage Webhooks for complete protection.</p>
-          <div class="defense-grid">
-            <div class="card"><h2>Anti-Nuke</h2><p>Detects destructive channel, role, ban, kick, webhook, and permission activity. Configure trusted owners and whitelist only staff or roles you fully trust.</p><span class="pill">/antinuke configure</span><span class="pill">/antinuke whitelist</span></div>
-            <div class="card"><h2>AutoMod</h2><p>Controls spam, links, invites, mass mentions, caps, and prohibited content before it becomes a raid problem.</p><span class="pill">/automod configure</span><span class="pill">/automod links</span><span class="pill">/automod invites</span></div>
-            <div class="card"><h2>Emergency Lock</h2><p>Use the single-channel lock for a local issue or lock every text channel during an active raid. Unlock when the threat is cleared.</p><span class="pill">/lock</span><span class="pill">!lock all</span><span class="pill">!unlock all</span></div>
-            <div class="card"><h2>Protected Staff</h2><p>God Mode prevents protected owners, users, and roles from being targeted by ordinary moderation actions.</p><span class="pill">/godmode add</span><span class="pill">/godmode remove</span></div>
-            <div class="card"><h2>Logs & Evidence</h2><p>Send moderation, member, role, channel, and security events to private staff channels. Keep View Audit Log enabled.</p><span class="pill">/config panel</span><span class="pill">Logs tab</span></div>
-            <div class="card"><h2>Recovery</h2><p>Create server backup codes before major changes. Store codes privately and test your recovery process before an emergency.</p><span class="pill">/backup create</span><span class="pill">Security tab</span></div>
-          </div>
-        </div>
-        <div class="card" id="setupGuideCard">
-          <h2>Bot Setup Guide</h2>
-          <p>Run these commands inside each Discord server after inviting the bot. The first section is the recommended minimum; the rest enables optional server features.</p>
-          <ol class="guide-list">
-            <li><b>Main setup — <code>/setup wizard</code>:</b> select the logs channel, welcome channel, ticket category, backup/update channel, and server prefix. This saves the main server locations in one command.</li>
-            <li><b>Check permissions — <code>/doctor</code>:</b> shows missing permissions, intents, variables, voice requirements, and configuration problems. Fix every red item before continuing.</li>
-            <li><b>Server logs — <code>/logs set</code>:</b> choose the private staff channel that should receive server events. Use <code>/usagelogs set</code> if you also want command-usage records.</li>
-            <li><b>Anti-Nuke — <code>/antinuke panel</code>:</b> review the clickable protection panel, then run <code>/antinuke enable</code>. Add trusted people or roles with <code>/antinuke whitelist</code> and confirm with <code>/antinuke status</code>.</li>
-            <li><b>AutoMod — <code>/automod links</code> and <code>/automod invites</code>:</b> turn on link and invite filtering. Use <code>/automod words</code> for banned words and <code>/automod configure</code> for other rules and punishments.</li>
-            <li><b>Welcome system — <code>/welcome configure</code>:</b> set the welcome channel, message, optional goodbye channel, and autorole together. Use <code>/welcome set</code> or <code>/welcome leave</code> when changing only one message.</li>
-            <li><b>Tickets — <code>/ticket panel</code>:</b> run this in the channel where members should open support tickets. The category chosen in <code>/setup wizard</code> controls where tickets are created.</li>
-            <li><b>Self roles — <code>/roles panel</code>:</b> create the member role-selection panel. Make sure the bot role is above every role it needs to give.</li>
-            <li><b>Levels — <code>/levels toggle</code>:</b> enable XP and ranks if wanted. Add automatic rewards with <code>/levelrewards add</code> and check them with <code>/levelrewards list</code>.</li>
-            <li><b>Join-to-create voice — <code>/setup jtc</code>:</b> select the lobby voice channel, output category, room name, and user limit. Check it afterward with <code>/jtc config</code>.</li>
-            <li><b>Optional community tools:</b> use <code>/suggest setup</code>, <code>/bug setup</code>, <code>/modmail setup</code>, <code>/starboard setup</code>, <code>/quarantine setup</code>, <code>/stats setup</code>, and <code>/boost setup</code> only for features your server needs.</li>
-            <li><b>Backup and final check — <code>/backup make_code</code>:</b> save the backup code privately, then run <code>/checklist</code>, <code>/dashboard overview</code>, and <code>/doctor</code> to confirm the server is ready.</li>
-          </ol>
-        </div>
-        <div class="card" id="paymentLogsCard">
-          <h2>Payment Logs</h2>
-          <p>Only Stripe-confirmed payments appear here. Checkout clicks are never counted as payments.</p>
-          <button onclick="loadPaymentLogs()">Refresh Payments</button>
-          <div id="paymentConfigNotice"></div>
-          <div id="paymentLogs"></div>
-        </div>
-        <div class="card">
-          <h2>Promo Codes</h2><p>Create percentage discounts and track active codes and confirmed uses.</p>
-          <div class="row"><input id="promoCode" maxlength="32" placeholder="CODE"><input id="promoPercent" type="number" min="1" max="100" placeholder="% off"><input id="promoMax" type="number" min="0" value="0" placeholder="Max uses (0 unlimited)"></div>
-          <label>Works for</label><select id="promoProduct"><option value="all">All packages</option><option value="vc_perms">VC Perms</option><option value="anti_reject">Anti-Reject</option><option value="godmode">Godmode</option><option value="all_access">All Access only</option></select>
-          <button onclick="savePromo()">Create or Update Code</button><button onclick="loadPromos()">Refresh Codes</button><div id="promoList"></div>
-        </div>
-        <div class="card">
-          <h2>Random Giveaway</h2><p>One outcome per line. Add <code>|weight</code> to control how often it can win.</p>
-          <textarea id="giveawayOutcomes" placeholder="10% off|35&#10;Nitro|10&#10;$15 credit|15"></textarea>
-          <button onclick="saveGiveawayConfig()">Save Giveaway Picks</button>
-        </div>
-        <div class="card">
-          <h2>Live Channels</h2><p>Creates locked voice channels for member count, VC count, top balance, MVP winner, and giveaway winner.</p>
-          <label>MVP winner</label><select id="mvpMember"></select>
-          <div class="row"><button onclick="setupLiveChannels()">Create or Refresh Channels</button><button onclick="setMvp()">Set MVP Winner</button></div>
-        </div>
-        <div class="card" id="engagementToolsCard">
-          <h2>Engagement Tools</h2>
-          <p>Manage sticky information, scheduled announcements and temporary roles without using Discord commands.</p>
-          <div class="card">
-            <h2>Sticky Message</h2>
-            <label>Channel</label><select id="stickyChannel"></select>
-            <label>Message</label><textarea id="stickyText" maxlength="4000" placeholder="Important information that should stay visible..."></textarea>
-            <label>Refresh after this many messages</label><input id="stickyRefresh" type="number" min="2" max="50" value="5">
-            <div class="row"><button onclick="saveSticky()">Save Sticky</button><button onclick="removeSticky()">Turn Off</button></div>
-          </div>
-          <div class="card">
-            <h2>Announcements</h2>
-            <label>Channel</label><select id="announcementChannel"></select>
-            <label>Title</label><input id="announcementTitle" maxlength="256" placeholder="Server Update">
-            <label>Message</label><textarea id="announcementText" maxlength="4000" placeholder="Write the announcement..."></textarea>
-            <label>Minutes from now</label><input id="announcementMinutes" type="number" min="1" max="43200" value="60">
-            <div class="row"><button onclick="sendAnnouncementNow()">Send Now</button><button onclick="scheduleAnnouncement()">Schedule</button></div>
-            <div id="scheduledAnnouncements"></div>
-          </div>
-          <div class="card">
-            <h2>Temporary Roles</h2>
-            <div class="row"><div><label>Member</label><select id="tempRoleMember"></select></div><div><label>Role</label><select id="tempRoleRole"></select></div></div>
-            <label>Minutes</label><input id="tempRoleMinutes" type="number" min="1" max="43200" value="1440">
-            <div class="row"><button onclick="giveTempRole()">Give Temporary Role</button><button onclick="removeTempRole()">Remove Early</button></div>
-            <div id="temporaryRoles"></div>
-          </div>
-          <button onclick="loadEngagement()">Refresh Engagement Tools</button>
-          <div id="stickyList"></div>
-        </div>
-        <div class="card" id="recentUpdatesCard">
-          <h2>Recent Updates</h2>
-          <p>The latest AinBot releases, their dates and everything included in each update.</p>
-          <button onclick="loadUpdates()">Refresh Updates</button>
-          <div id="updatesList"></div>
-        </div>
         <div id="results" class="card"></div>
       </main>
     </div>
+    <section id="panelTab" class="tabpage designer">
+      <div class="panel">
+        <h2>Discord Panel Designer</h2><p>Build the full command panel layout each server sees—not just its color.</p>
+        <label>Your Discord user ID</label><input id="panelActorId" inputmode="numeric" placeholder="Server owner or approved role">
+        <label>Text channel</label><select id="panelChannel"></select>
+        <div class="row"><div><label>Layout</label><select id="panelLayout"><option value="compact">Compact command list</option><option value="cards">Command cards</option><option value="minimal">Minimal panel</option></select></div><div><label>Accent</label><input id="panelColor" type="color" value="#5865f2"></div></div>
+        <label>Panel title</label><input id="panelTitle" maxlength="120" value="Voice Channel Controls">
+        <label>Description</label><textarea id="panelDescription" maxlength="1000">Manage your temporary voice channels with the commands below.</textarea>
+        <label>Commands (one per line: command | explanation)</label><textarea id="panelFields" maxlength="3500">/vc count | View active users
+/vc rename &lt;name&gt; | Rename your room
+/vc lock | Lock room
+/vc unlock | Unlock room
+/vc permit &lt;user&gt; | Permit user
+/vc reject &lt;user&gt; | Reject user
+/vc limit &lt;1-100&gt; | Set room limit
+/vc transfer &lt;user&gt; | Transfer ownership</textarea>
+        <label>Footer</label><input id="panelFooter" maxlength="200" value="AIN Bot • Server controls">
+        <label>Thumbnail URL (optional)</label><input id="panelThumbnail" placeholder="https://...">
+        <div class="row"><button onclick="loadPanelDesign()">Load Saved</button><button onclick="savePanelDesign()">Save Design</button><button onclick="sendPanelDesign()">Send Panel</button></div>
+        <p class="status" id="panelStatus"></p>
+      </div>
+      <div class="panel"><h2>Live Discord Preview</h2><div class="discord-preview"><div class="discord-message"><div class="discord-avatar"></div><div><div class="discord-name">AIN Bot <small>BOT · Today</small></div><div class="embed-preview" id="panelPreview"></div></div></div></div><p>Discord controls the outer font and message frame. AIN controls the title, description, fields, arrangement, accent, image, and footer.</p></div>
+    </section>
+    <section id="ttsTab" class="tabpage tts-layout">
+      <div class="panel">
+        <h2>Text to Speech</h2>
+        <p>Generate audio on the bot server and play it directly in Discord—your microphone is never used.</p>
+        <label for="ttsText">What should AIN Bot say? <span id="ttsCount">0</span>/500</label>
+        <textarea id="ttsText" maxlength="500" placeholder="Type what the bot should say..."></textarea>
+        <div class="row">
+          <button onclick="speakVoice()">Speak</button>
+          <button onclick="previewVoice()">Preview</button>
+          <button class="danger" onclick="stopVoice()">Stop</button>
+        </div>
+        <audio id="ttsPreview" controls hidden></audio>
+        <div class="card">
+          <h2>Voice controls</h2>
+          <label for="ttsVoice">Voice style</label>
+          <select id="ttsVoice">
+            <option value="female">Female — Aria</option><option value="male">Male — Guy</option>
+            <option value="deep">Deep — Christopher</option><option value="robotic">Robotic — Andrew</option>
+            <option value="funny">Funny — Ana</option>
+          </select>
+          <div class="slider-line"><label for="ttsVolume">Volume</label><input id="ttsVolume" type="range" min="0" max="200" value="100"><output id="ttsVolumeOut">100%</output></div>
+          <div class="slider-line"><label for="ttsSpeed">Speed</label><input id="ttsSpeed" type="range" min="50" max="200" value="100"><output id="ttsSpeedOut">1.00×</output></div>
+          <div class="slider-line"><label for="ttsPitch">Pitch</label><input id="ttsPitch" type="range" min="-50" max="50" value="0"><output id="ttsPitchOut">0 Hz</output></div>
+        </div>
+      </div>
+      <aside class="panel">
+        <h2>Discord connection</h2>
+        <p id="voiceStatus" class="connection">Disconnected</p>
+        <label for="ttsActorId">Your Discord user ID</label>
+        <input id="ttsActorId" inputmode="numeric" placeholder="Required for owner/role check">
+        <label for="ttsVoiceChannels">Voice channel</label>
+        <select id="ttsVoiceChannels"></select>
+        <div class="row"><button onclick="joinVoice()">Join VC</button><button onclick="leaveVoice()">Leave VC</button></div>
+        <p class="status" id="ttsStatus"></p>
+        <p>Access is limited to the server owner or users/roles configured by the bot owner.</p>
+      </aside>
+    </section>
   </div>
 <script>
 const $ = id => document.getElementById(id);
-const safe = value => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[character]);
 $('token').value = localStorage.ainToken || '';
+$('ttsActorId').value = localStorage.ainTtsActor || '';
 function token(){ localStorage.ainToken = $('token').value; return encodeURIComponent($('token').value); }
 function guild(){ return $('guilds').value; }
 function setStatus(t){ $('status').textContent = t; }
+function setTtsStatus(t){ $('ttsStatus').textContent = t; }
+function showTab(id, button){ document.querySelectorAll('.tabpage').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); $(id).classList.add('active'); button.classList.add('active'); if(id==='ttsTab') refreshVoiceStatus(); if(id==='panelTab') renderPanelPreview(); }
+function ttsPayload(){ localStorage.ainTtsActor=$('ttsActorId').value; return {actor_id:$('ttsActorId').value, channel_id:$('ttsVoiceChannels').value, text:$('ttsText').value, voice:$('ttsVoice').value, volume:Number($('ttsVolume').value), speed:Number($('ttsSpeed').value), pitch:Number($('ttsPitch').value)}; }
 async function api(path, opts={}) {
   const sep = path.includes('?') ? '&' : '?';
   const res = await fetch(path + sep + 'token=' + token(), opts);
@@ -377,14 +289,8 @@ async function loadGuilds(){
   try {
     const data = await api('/api/guilds');
     $('guilds').innerHTML = data.guilds.map(g=>`<option value="${g.id}">${g.name} (${g.id})</option>`).join('');
-    const transferOptions = data.guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
-    $('transferSource').innerHTML = transferOptions;
-    $('transferDestination').innerHTML = transferOptions;
-    if(data.guilds.length > 1) $('transferDestination').selectedIndex = 1;
     setStatus('Servers loaded.');
-    await loadOwnerIds();
     await loadSummary();
-    await loadTransferStatus();
   } catch(e){ setStatus(e.message); }
 }
 async function loadSummary(){
@@ -392,17 +298,31 @@ async function loadSummary(){
   const data = await api('/api/guild/' + guild() + '/summary');
   $('summary').innerHTML = `<h2>${data.name}</h2><span class="pill">${data.members} members</span><span class="pill">${data.channels} channels</span><span class="pill">${data.roles} roles</span><span class="pill">prefix ${data.prefix}</span><span class="pill">bot ${data.bot_name}</span><div class="stats"><div class="stat"><b>${data.slash_commands}</b><span>slash commands</span></div><div class="stat"><b>${data.prefix_commands}</b><span>prefix commands</span></div><div class="stat"><b>${data.total_commands}</b><span>total commands</span></div><div class="stat"><b>${data.voice_channels.length}</b><span>voice channels</span></div></div>`;
   $('voiceChannels').innerHTML = data.voice_channels.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
+  $('ttsVoiceChannels').innerHTML = data.voice_channels.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');
   $('textChannels').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
-  $('stickyChannel').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
-  $('announcementChannel').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+  $('panelChannel').innerHTML = data.text_channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
   $('members').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
-  $('tempRoleMember').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
-  $('mvpMember').innerHTML = data.members_list.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
   $('roles').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
-  $('tempRoleRole').innerHTML = data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
-  await loadVcOffer();
+  $('ttsText').maxLength = data.tts_max_length;
+  $('ttsCount').parentElement.lastChild.textContent = '/' + data.tts_max_length;
+  refreshVoiceStatus();
 }
+function panelPayload(){
+  localStorage.ainPanelActor=$('panelActorId').value;
+  return {actor_id:$('panelActorId').value,channel_id:$('panelChannel').value,layout:$('panelLayout').value,color:$('panelColor').value,title:$('panelTitle').value,description:$('panelDescription').value,fields:$('panelFields').value,footer:$('panelFooter').value,thumbnail_url:$('panelThumbnail').value};
+}
+function escPanel(value){return String(value||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function renderPanelPreview(){
+  const d=panelPayload(), rows=d.fields.split(/\\r?\\n/).map(v=>v.split('|').map(x=>x.trim())).filter(v=>v[0]).slice(0,25);
+  const fields=rows.map(v=>`<div class="preview-field"><b>${escPanel(v[0])}</b><span>${escPanel(v[1]||'')}</span></div>`).join('');
+  $('panelPreview').style.borderColor=d.color;
+  $('panelPreview').innerHTML=`<h3>${escPanel(d.title||'Command Panel')}</h3><p>${escPanel(d.description)}</p><div class="${d.layout==='cards'?'preview-cards':''}">${fields}</div>${d.layout==='minimal'?'':'<div class="preview-footer">'+escPanel(d.footer)+'</div>'}`;
+}
+async function loadPanelDesign(){try{const d=await api('/api/guild/'+guild()+'/panel');Object.entries({panelLayout:d.layout,panelColor:d.color,panelTitle:d.title,panelDescription:d.description,panelFields:d.fields,panelFooter:d.footer,panelThumbnail:d.thumbnail_url}).forEach(([id,v])=>{if(v!==undefined&&v!==null)$(id).value=v});renderPanelPreview();$('panelStatus').textContent='Saved design loaded.'}catch(e){$('panelStatus').textContent=e.message}}
+async function savePanelDesign(){try{await api('/api/guild/'+guild()+'/panel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(panelPayload())});$('panelStatus').textContent='Design saved for this server.';renderPanelPreview()}catch(e){$('panelStatus').textContent=e.message}}
+async function sendPanelDesign(){try{await api('/api/guild/'+guild()+'/panel/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(panelPayload())});$('panelStatus').textContent='Panel sent to Discord.'}catch(e){$('panelStatus').textContent=e.message}}
+$('panelActorId').value=localStorage.ainPanelActor||'';['panelLayout','panelColor','panelTitle','panelDescription','panelFields','panelFooter','panelThumbnail'].forEach(id=>$(id).addEventListener('input',renderPanelPreview));renderPanelPreview();
 function renderCommands(commands){
   $('results').innerHTML = commands.map(c=>`<div class="cmd"><b>${c.name}</b><span>${c.description || 'No description'}</span></div>`).join('') || '<p>No commands found.</p>';
 }
@@ -412,31 +332,14 @@ async function askAssistant(){ const data = await api('/api/guild/' + guild() + 
 async function savePrefix(){ await api('/api/guild/' + guild() + '/prefix', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({prefix:$('prefix').value})}); setStatus('Prefix saved.'); loadSummary(); }
 async function saveTheme(){ await api('/api/guild/' + guild() + '/theme', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({color:$('color').value})}); setStatus('Theme saved.'); }
 async function feature(enabled){ await api('/api/guild/' + guild() + '/feature', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({feature:$('feature').value, enabled})}); setStatus('Feature updated.'); }
-async function joinVoice(){ await api('/api/guild/' + guild() + '/voice/join', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('voiceChannels').value})}); setStatus('Bot joined the VC.'); }
-async function leaveVoice(){ await api('/api/guild/' + guild() + '/voice/leave', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({})}); setStatus('Bot left the VC.'); }
-async function speakVoice(){ await api('/api/guild/' + guild() + '/voice/speak', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({text:$('ttsText').value, voice:$('ttsVoice').value, channel_id:$('voiceChannels').value})}); setStatus('Bot is speaking in VC.'); $('ttsText').value=''; }
+async function joinVoice(){ try { const data=await api('/api/guild/' + guild() + '/voice/join', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(ttsPayload())}); setTtsStatus('Connected to ' + data.channel + '.'); await refreshVoiceStatus(); } catch(e){ setTtsStatus(e.message); } }
+async function leaveVoice(){ try { await api('/api/guild/' + guild() + '/voice/leave', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(ttsPayload())}); setTtsStatus('Bot left the voice channel.'); await refreshVoiceStatus(); } catch(e){ setTtsStatus(e.message); } }
+async function speakVoice(){ try { const data=await api('/api/guild/' + guild() + '/voice/speak', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(ttsPayload())}); setTtsStatus(`Added to queue (${data.queued}).`); $('ttsText').value=''; $('ttsCount').textContent='0'; await refreshVoiceStatus(); } catch(e){ setTtsStatus(e.message); } }
+async function stopVoice(){ try { await api('/api/guild/' + guild() + '/voice/stop', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(ttsPayload())}); setTtsStatus('Playback stopped and queue cleared.'); await refreshVoiceStatus(); } catch(e){ setTtsStatus(e.message); } }
+async function refreshVoiceStatus(){ if(!guild()) return; try { const data=await api('/api/guild/' + guild() + '/voice/status'); const el=$('voiceStatus'); el.classList.toggle('online',data.connected); el.textContent=data.connected ? `${data.channel} · ${data.playing?'Speaking':'Ready'} · ${data.queued} queued` : 'Disconnected'; } catch(e){ $('voiceStatus').textContent=e.message; } }
+async function previewVoice(){ try { setTtsStatus('Generating preview…'); const res=await fetch('/api/guild/'+guild()+'/voice/preview?token='+token(), {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(ttsPayload())}); const error=await res.clone().json().catch(()=>null); if(!res.ok) throw new Error(error?.error||'Preview failed'); const player=$('ttsPreview'); if(player.src) URL.revokeObjectURL(player.src); player.src=URL.createObjectURL(await res.blob()); player.hidden=false; await player.play(); setTtsStatus('Preview playing in this browser only.'); } catch(e){ setTtsStatus(e.message); } }
 async function sendBotMessage(){ await api('/api/guild/' + guild() + '/message', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, message:$('botMessage').value})}); setStatus('Message sent as bot.'); $('botMessage').value=''; }
 async function sendEmbed(){ await api('/api/guild/' + guild() + '/embed', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({channel_id:$('textChannels').value, title:$('embedTitle').value, message:$('embedText').value})}); setStatus('Embed sent.'); }
-async function loadVcOffer(){
-  if(!guild()) return;
-  try {
-    const data=await api('/api/guild/' + guild() + '/vc-offer'); const offer=data.offer;
-    $('vcOfferEnabled').value=String(offer.enabled); $('vcOfferTitle').value=offer.title; $('vcOfferMessage').value=offer.message;
-    $('vcPermsPrice').value=offer.vc_perms_price; $('vcPermsUrl').value=offer.vc_perms_url;
-    $('antiRejectPrice').value=offer.anti_reject_price; $('antiRejectUrl').value=offer.anti_reject_url;
-    $('godmodePrice').value=offer.godmode_price; $('godmodeUrl').value=offer.godmode_url;
-    $('allAccessPrice').value=offer.all_price; $('allAccessUrl').value=offer.all_url;
-  } catch(e){ setStatus(e.message); }
-}
-async function saveVcOffer(){
-  const body={enabled:$('vcOfferEnabled').value==='true',title:$('vcOfferTitle').value,message:$('vcOfferMessage').value,
-    vc_perms_price:$('vcPermsPrice').value,vc_perms_url:$('vcPermsUrl').value,
-    anti_reject_price:$('antiRejectPrice').value,anti_reject_url:$('antiRejectUrl').value,
-    godmode_price:$('godmodePrice').value,godmode_url:$('godmodeUrl').value,
-    all_price:$('allAccessPrice').value,all_url:$('allAccessUrl').value};
-  try { await api('/api/guild/' + guild() + '/vc-offer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}); setStatus('VC reject DM saved.'); }
-  catch(e){ setStatus(e.message); }
-}
 async function roleAction(action){ await api('/api/guild/' + guild() + '/member/role', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, role_id:$('roles').value, action})}); setStatus('Role updated.'); }
 async function timeoutMember(){ await api('/api/guild/' + guild() + '/member/timeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value, minutes:10})}); setStatus('Member timed out for 10 minutes.'); }
 async function untimeoutMember(){ await api('/api/guild/' + guild() + '/member/untimeout', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({member_id:$('members').value})}); setStatus('Timeout removed.'); }
@@ -456,188 +359,11 @@ async function createRole(){ await api('/api/guild/' + guild() + '/role/create',
 async function renameRole(){ await api('/api/guild/' + guild() + '/role/rename', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value, name:$('roleName').value})}); setStatus('Role renamed.'); await loadSummary(); }
 async function moveRoleTop(){ await api('/api/guild/' + guild() + '/role/move_top', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({role_id:$('roles').value})}); setStatus('Role moved.'); await loadSummary(); }
 async function loadLogs(){ const data = await api('/api/guild/' + guild() + '/logs'); $('logsBox').innerHTML = data.logs.map(l=>`<div class="cmd"><b>${l.event}</b><span>${l.text}</span></div>`).join('') || '<p>No logs yet.</p>'; setStatus('Logs loaded.'); }
-async function loadPaymentLogs(){
-  if(!guild()) return;
-  try {
-    const data=await api('/api/guild/' + guild() + '/payment-logs');
-    $('paymentConfigNotice').innerHTML=data.stripe_configured ? '' : '<p class="notice">Set PUBLIC_BASE_URL, STRIPE_SECRET_KEY, and STRIPE_WEBHOOK_SECRET to enable verified checkout logs.</p>';
-    $('paymentLogs').innerHTML=data.payments.map(payment=>`<div class="cmd"><b>${safe(payment.username)} · ${safe(payment.product)}${payment.refunded?' · REFUNDED':''}</b><span>${safe(payment.amount_display)} · ${safe(payment.customer_email || 'No email')} · <code>${safe(payment.session_id)}</code></span></div>`).join('') || '<p>No confirmed payments yet.</p>';
-  } catch(e){ setStatus(e.message); }
-}
-async function loadPromos(){ const data=await api('/api/guild/'+guild()+'/promos'); $('promoList').innerHTML=data.codes.map(c=>`<div class="cmd"><b>${safe(c.code)} · ${c.percent_off}% off</b><span>${c.active?'Active':'Inactive'} · For: ${safe(c.product==='all'?'All packages':c.product.replaceAll('_',' '))} · ${c.uses}/${c.max_uses||'unlimited'} uses · Used by: ${safe(c.used_by||'Nobody yet')}</span><button onclick="togglePromo('${safe(c.code)}',${c.percent_off},${c.max_uses},'${safe(c.product)}',${!c.active})">${c.active?'Disable':'Enable'}</button></div>`).join('')||'<p>No promo codes yet.</p>'; }
-async function savePromo(){ try{ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:$('promoCode').value,percent_off:$('promoPercent').value,max_uses:$('promoMax').value||0,product:$('promoProduct').value,active:true})}); setStatus('Promo code saved.'); loadPromos(); }catch(e){setStatus(e.message);} }
-async function togglePromo(code,percent_off,max_uses,product,active){ await api('/api/guild/'+guild()+'/promos',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code,percent_off,max_uses,product,active})}); loadPromos(); }
-async function loadGiveawayConfig(){ const data=await api('/api/guild/'+guild()+'/giveaway-config'); $('giveawayOutcomes').value=data.outcomes.map(x=>x.name+'|'+x.weight).join('\\n'); }
-async function saveGiveawayConfig(){ const outcomes=$('giveawayOutcomes').value.split('\\n').map(line=>{const p=line.split('|');return {name:p[0].trim(),weight:Number(p[1]||1)}}).filter(x=>x.name&&x.weight>0); await api('/api/guild/'+guild()+'/giveaway-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({outcomes})}); setStatus('Giveaway picks saved.'); }
-async function setupLiveChannels(){ await api('/api/guild/'+guild()+'/live-channels',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'setup'})}); setStatus('Live channels created and refreshed.'); }
-async function setMvp(){ await api('/api/guild/'+guild()+'/live-channels',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'mvp',member_id:$('mvpMember').value})}); setStatus('MVP winner updated.'); }
-async function loadOwnerIds(){
-  try {
-    const data=await api('/api/owner-ids');
-    $('ownerIdsList').innerHTML=data.owners.map(owner=>`<div class="owner-entry"><div><b>${safe(owner.name)}</b><span>${owner.id}</span></div><button onclick="removeOwnerId('${owner.id}')" aria-label="Remove ${safe(owner.name)}">Remove</button></div>`).join('') || '<p>No owner IDs added yet.</p>';
-  } catch(e){ $('ownerIdsList').innerHTML=`<p>${e.message}</p>`; }
-}
-async function addOwnerId(){
-  const userId=$('newOwnerId').value.trim();
-  try {
-    await api('/api/owner-ids/add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user_id:userId})});
-    $('newOwnerId').value=''; await loadOwnerIds(); setStatus('Owner ID added and saved.');
-  } catch(e){ setStatus(e.message); }
-}
-async function removeOwnerId(userId){
-  if(!confirm('Remove this bot owner?')) return;
-  try {
-    await api('/api/owner-ids/remove',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user_id:userId})});
-    await loadOwnerIds(); setStatus('Owner ID removed.');
-  } catch(e){ setStatus(e.message); }
-}
-let commandCatalog=[];
-async function loadCommandCatalog(){
-  if(!guild()) return;
-  try {
-    const data=await api('/api/guild/' + guild() + '/commands');
-    commandCatalog=data.commands;
-    $('commandCatalogTotal').textContent=commandCatalog.length;
-    filterCommandCatalog();
-  } catch(e){ setStatus(e.message); }
-}
-function filterCommandCatalog(){
-  const query=($('commandCatalogSearch')?.value || '').trim().toLowerCase();
-  const matches=commandCatalog.filter(command=>(command.name+' '+(command.description||'')).toLowerCase().includes(query));
-  $('commandCatalogCount').textContent=matches.length;
-  $('commandCatalogResults').innerHTML=matches.map(command=>`<div class="cmd"><b>${command.name}</b><span>${command.description || 'Runs this bot feature. Use the command in Discord to see its available options.'}</span></div>`).join('') || '<p>No commands match that search.</p>';
-}
-async function loadTransferStatus(){
-  if(!$('transferSource').value || !$('transferDestination').value) return;
-  try {
-    const data = await api('/api/member-transfer/status?source_id=' + $('transferSource').value + '&destination_id=' + $('transferDestination').value);
-    $('authorizedCount').textContent = data.authorized;
-    $('eligibleCount').textContent = data.eligible;
-    $('transferResult').innerHTML = data.oauth_configured ? `<p>${data.already_in_destination} authorized user(s) are already in the destination.</p>` : '<p class="notice">OAuth needs the four Discord OAuth environment settings before members can authorize.</p>';
-  } catch(e){ $('transferResult').innerHTML = `<p>${e.message}</p>`; }
-}
-async function addAuthorizedMembers(){
-  if(!confirm('Add only the eligible users who explicitly authorized AIN?')) return;
-  try {
-    const data = await api('/api/member-transfer/add', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({source_id:$('transferSource').value, destination_id:$('transferDestination').value})});
-    $('transferResult').innerHTML = `<p><b>${data.added}</b> added · ${data.failed} failed · ${data.reauthorization_required} need to reauthorize.</p>`;
-    setStatus('Authorized member transfer finished.'); await loadTransferStatus();
-  } catch(e){ setStatus(e.message); }
-}
-async function createInvite(){
-  try {
-    const data = await api('/api/member-transfer/invite', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({destination_id:$('transferDestination').value})});
-    $('inviteUrl').value = data.url; $('copyInviteButton').disabled = false; setStatus('24-hour invite created.');
-  } catch(e){ setStatus(e.message); }
-}
-async function copyInvite(){ await navigator.clipboard.writeText($('inviteUrl').value); setStatus('Invite copied.'); }
-async function copyAuthorizationLink(){ await navigator.clipboard.writeText(location.origin + '/oauth/discord/start'); setStatus('Authorization link copied.'); }
-async function loadEngagement(){
-  try{
-    const data=await api('/api/guild/'+guild()+'/engagement');
-    $('stickyList').innerHTML=data.stickies.map(x=>`<div class="cmd"><b>#${safe(x.channel_name)}</b><span>Refreshes after ${x.refresh_after} messages · ${safe(x.text)}</span></div>`).join('')||'<p>No sticky messages configured.</p>';
-    $('scheduledAnnouncements').innerHTML=data.announcements.map(x=>`<div class="cmd"><b>#${safe(x.id)} · ${safe(x.title)}</b><span>#${safe(x.channel_name)} · ${safe(x.send_at)}</span><button onclick="cancelAnnouncement(${Number(x.id)})">Cancel</button></div>`).join('')||'<p>No scheduled announcements.</p>';
-    $('temporaryRoles').innerHTML=data.temporary_roles.map(x=>`<div class="cmd"><b>${safe(x.member_name)} · ${safe(x.role_name)}</b><span>Expires ${safe(x.expires_at)}</span></div>`).join('')||'<p>No temporary roles.</p>';
-  }catch(e){setStatus(e.message);}
-}
-async function saveSticky(){ await api('/api/guild/'+guild()+'/engagement/sticky',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'set',channel_id:$('stickyChannel').value,text:$('stickyText').value,refresh_after:$('stickyRefresh').value})}); setStatus('Sticky message saved.'); loadEngagement(); }
-async function removeSticky(){ await api('/api/guild/'+guild()+'/engagement/sticky',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'off',channel_id:$('stickyChannel').value})}); setStatus('Sticky message disabled.'); loadEngagement(); }
-async function sendAnnouncementNow(){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'send',channel_id:$('announcementChannel').value,title:$('announcementTitle').value,message:$('announcementText').value})}); setStatus('Announcement sent.'); }
-async function scheduleAnnouncement(){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'schedule',channel_id:$('announcementChannel').value,title:$('announcementTitle').value,message:$('announcementText').value,minutes:$('announcementMinutes').value})}); setStatus('Announcement scheduled.'); loadEngagement(); }
-async function cancelAnnouncement(id){ await api('/api/guild/'+guild()+'/engagement/announcement',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'cancel',id})}); setStatus('Announcement cancelled.'); loadEngagement(); }
-async function giveTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'give',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value,minutes:$('tempRoleMinutes').value})}); setStatus('Temporary role added.'); loadEngagement(); }
-async function removeTempRole(){ await api('/api/guild/'+guild()+'/engagement/temprole',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'remove',member_id:$('tempRoleMember').value,role_id:$('tempRoleRole').value})}); setStatus('Temporary role removed.'); loadEngagement(); }
-async function loadUpdates(){
-  try{
-    const data=await api('/api/updates');
-    $('updatesList').innerHTML=data.updates.map(update=>`<div class="card"><span class="pill">${safe(update.released_on)}</span><h2>${safe(update.title)}</h2><p>${safe(update.notes)}</p></div>`).join('')||'<p>No updates have been published yet.</p>';
-  }catch(e){setStatus(e.message);}
-}
-
-function setupTabs(){
-  const main = document.querySelector('main.panel');
-  const definitions = [
-    ['overview','Overview'], ['updates','Updates'], ['commands','All Commands'], ['defense','Defense'], ['setup','Setup Guide'], ['engagement','Engagement'], ['transfer','Member Transfer'], ['payments','Payments'], ['promos','Promo Codes'], ['giveaways','Giveaways'], ['live','Live Channels'], ['server','Server Control'], ['ai','AI Assistant'], ['voice','Voice & Chat'],
-    ['music','Music'], ['security','Security'], ['economy','Economy & Roles'], ['members','Members'], ['logs','Logs']
-  ];
-  const nav = document.createElement('nav'); nav.className = 'tabs'; nav.setAttribute('aria-label','Dashboard sections');
-  const panels = {};
-  definitions.forEach(([id,label], index)=>{
-    const button = document.createElement('button'); button.className='tab-button' + (index===0?' active':''); button.textContent=label; button.dataset.tab=id; button.type='button'; button.onclick=()=>showTab(id); nav.appendChild(button);
-    const panel = document.createElement('section'); panel.className='tab-panel' + (index===0?' active':''); panel.dataset.tab=id; panels[id]=panel;
-  });
-  const children = [...main.children]; main.prepend(nav); definitions.forEach(([id])=>main.appendChild(panels[id]));
-  children.forEach(node=>{
-    const title=(node.querySelector?.('h2')?.textContent || node.id || '').toLowerCase();
-    let tab='overview';
-    if(title.includes('ask') || title.includes('assistant') || node.id==='results') tab='ai';
-    if(title.includes('server control')) tab='server';
-    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement') || title.includes('vc reject')) tab='voice';
-    if(title.includes('music')) tab='music';
-    if(title.includes('security')) tab='security';
-    if(title.includes('economy')) tab='economy';
-    if(title.includes('member transfer')) tab='transfer';
-    if(title.includes('all commands')) tab='commands';
-    if(title.includes('defense center')) tab='defense';
-    if(title.includes('bot setup guide')) tab='setup';
-    if(title.includes('payment logs')) tab='payments';
-    if(title.includes('promo codes')) tab='promos';
-    if(title.includes('random giveaway')) tab='giveaways';
-    if(title.includes('live channels')) tab='live';
-    if(title.includes('engagement tools')) tab='engagement';
-    if(title.includes('recent updates')) tab='updates';
-    if(title.includes('live logs')) tab='logs';
-    panels[tab].appendChild(node);
-  });
-  document.querySelectorAll('.grid > section.panel > .card:not([data-stay])').forEach(node=>{
-    const title=(node.querySelector('h2')?.textContent || '').toLowerCase();
-    let tab='overview';
-    if(title.includes('bot voice') || title.includes('bot chat') || title.includes('announcement') || title.includes('vc reject')) tab='voice';
-    panels[tab].appendChild(node);
-  });
-}
-function showTab(id){
-  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.dataset.tab===id));
-  document.querySelectorAll('.tab-button').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
-  if(id==='commands' && !commandCatalog.length) loadCommandCatalog();
-  if(id==='payments') loadPaymentLogs();
-  if(id==='promos') loadPromos();
-  if(id==='giveaways') loadGiveawayConfig();
-  if(id==='engagement') loadEngagement();
-  if(id==='updates') loadUpdates();
-  history.replaceState(null,'','#'+id);
-}
-function makeDropdownsSearchable(){
-  document.querySelectorAll('select').forEach(select=>{
-    if(select.dataset.searchable) return;
-    select.dataset.searchable='true';
-    const search=document.createElement('input');
-    search.type='search';
-    search.className='select-search';
-    const label=select.closest('div')?.querySelector('label')?.textContent || select.previousElementSibling?.textContent || 'options';
-    search.placeholder='Type to find ' + label.toLowerCase() + '…';
-    search.setAttribute('aria-label','Search ' + label);
-    const filter=()=>{
-      const query=search.value.trim().toLowerCase();
-      let firstVisible=null;
-      [...select.options].forEach(option=>{
-        const visible=!query || (option.textContent + ' ' + option.value).toLowerCase().includes(query);
-        option.hidden=!visible;
-        if(visible && !firstVisible) firstVisible=option;
-      });
-      if(firstVisible && select.selectedOptions[0]?.hidden){
-        select.value=firstVisible.value;
-        select.dispatchEvent(new Event('change',{bubbles:true}));
-      }
-    };
-    search.addEventListener('input',filter);
-    new MutationObserver(filter).observe(select,{childList:true});
-    select.before(search);
-  });
-}
-setupTabs();
-makeDropdownsSearchable();
-if(location.hash) showTab(location.hash.slice(1));
+$('ttsText').addEventListener('input',()=>{$('ttsCount').textContent=$('ttsText').value.length});
+$('ttsVolume').addEventListener('input',()=>{$('ttsVolumeOut').textContent=$('ttsVolume').value+'%'});
+$('ttsSpeed').addEventListener('input',()=>{$('ttsSpeedOut').textContent=(Number($('ttsSpeed').value)/100).toFixed(2)+'×'});
+$('ttsPitch').addEventListener('input',()=>{$('ttsPitchOut').textContent=$('ttsPitch').value+' Hz'});
+setInterval(()=>{ if($('ttsTab').classList.contains('active')) refreshVoiceStatus(); },5000);
 </script>
 </body>
 </html>"""
@@ -646,235 +372,116 @@ if(location.hash) showTab(location.hash.slice(1));
 class Dashboard:
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.oauth_db = Path(__file__).resolve().parents[2] / "data" / "oauth_authorizations.sqlite3"
-        self.owner_ids_file = Path(__file__).resolve().parents[2] / "data" / "dashboard_owner_ids.json"
-        self._init_oauth_db()
-        self._load_owner_ids()
-
-    async def fulfill_access(self, guild_id: str, user_id: str, product: str) -> tuple[bool, str]:
-        if not guild_id.isdigit() or not user_id.isdigit() or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
-            return False, "Invalid fulfillment details."
-        guild = self.bot.get_guild(int(guild_id))
-        if guild is None:
-            return False, "The bot is not connected to that server."
-        member = guild.get_member(int(user_id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(int(user_id))
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                return False, "The Discord member could not be found."
-        role_names = {"vc_perms": "VC Perms", "anti_reject": "Anti-Reject", "godmode": "VC Godmode", "all": "All Access"}
-        role = discord.utils.get(guild.roles, name=role_names[product])
-        try:
-            if role is None:
-                role = await guild.create_role(name=role_names[product], reason="Automatic store fulfillment")
-            await member.add_roles(role, reason=f"Automatic store fulfillment: {product}")
-        except discord.Forbidden:
-            return False, "Move the bot role above the access roles and give it Manage Roles."
-        except discord.HTTPException:
-            return False, "Discord could not create or assign the access role."
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
-        for key in keys:
-            ids = list(settings.get(key, []))
-            if member.id not in ids:
-                ids.append(member.id)
-                await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
-        return True, role.name
-
-    async def remove_access(self, guild_id: str, user_id: str, product: str, reason: str) -> tuple[bool, str]:
-        if not guild_id.isdigit() or not user_id.isdigit() or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
-            return False, "Invalid fulfillment details."
-        guild = self.bot.get_guild(int(guild_id))
-        if guild is None:
-            return False, "The bot is not connected to that server."
-        member = guild.get_member(int(user_id))
-        if member is None:
-            return False, "The member is no longer in that server."
-        role_names = {"vc_perms": ["VC Perms"], "anti_reject": ["Anti-Reject"], "godmode": ["VC Godmode"], "all": ["All Access", "VC Perms", "Anti-Reject", "VC Godmode"]}
-        try:
-            roles = [role for name in role_names[product] if (role := discord.utils.get(guild.roles, name=name)) is not None]
-            if roles:
-                await member.remove_roles(*roles, reason=reason)
-        except (discord.Forbidden, discord.HTTPException):
-            return False, "Discord could not remove the access role."
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        keys = {"vc_perms": ["vc_paid_perms"], "anti_reject": ["vc_anti_reject"], "godmode": ["vc_godmode"], "all": ["vc_paid_perms", "vc_anti_reject", "vc_godmode"]}[product]
-        for key in keys:
-            ids = [value for value in settings.get(key, []) if int(value) != member.id]
-            await self.bot.db.set_settings_value(guild.id, key, ids, self.bot.settings.default_prefix)
-        return True, "Access removed"
-
-    def _load_owner_ids(self) -> None:
-        if not self.owner_ids_file.exists():
-            return
-        try:
-            saved = json.loads(self.owner_ids_file.read_text(encoding="utf-8"))
-            self.bot.settings.owner_ids = {int(value) for value in saved if str(value).isdigit()}
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            self.bot.log.warning("Could not load dashboard owner IDs; using OWNER_IDS from the environment.")
-
-    def _save_owner_ids(self) -> None:
-        self.owner_ids_file.parent.mkdir(parents=True, exist_ok=True)
-        self.owner_ids_file.write_text(json.dumps(sorted(self.bot.settings.owner_ids), indent=2), encoding="utf-8")
-
-    def _init_oauth_db(self) -> None:
-        self.oauth_db.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.oauth_db) as db:
-            db.execute(
-                """CREATE TABLE IF NOT EXISTS oauth_authorizations (
-                    user_id TEXT PRIMARY KEY,
-                    username TEXT NOT NULL,
-                    access_token TEXT NOT NULL,
-                    refresh_token TEXT,
-                    expires_at INTEGER NOT NULL,
-                    scope TEXT NOT NULL,
-                    authorized_at INTEGER NOT NULL
-                )"""
-            )
-            db.execute(
-                """CREATE TABLE IF NOT EXISTS payment_logs (
-                    session_id TEXT PRIMARY KEY,
-                    guild_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    product TEXT NOT NULL,
-                    amount INTEGER NOT NULL,
-                    currency TEXT NOT NULL,
-                    customer_email TEXT,
-                    payment_methods TEXT,
-                    paid_at INTEGER NOT NULL,
-                    payment_intent TEXT,
-                    refunded INTEGER NOT NULL DEFAULT 0
-                )"""
-            )
-            payment_columns = {row[1] for row in db.execute("PRAGMA table_info(payment_logs)")}
-            if "payment_intent" not in payment_columns:
-                db.execute("ALTER TABLE payment_logs ADD COLUMN payment_intent TEXT")
-            if "refunded" not in payment_columns:
-                db.execute("ALTER TABLE payment_logs ADD COLUMN refunded INTEGER NOT NULL DEFAULT 0")
-            db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
-                guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
-                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, product TEXT NOT NULL DEFAULT 'all',
-                PRIMARY KEY(guild_id,code))""")
-            if "product" not in {row[1] for row in db.execute("PRAGMA table_info(promo_codes)")}:
-                db.execute("ALTER TABLE promo_codes ADD COLUMN product TEXT NOT NULL DEFAULT 'all'")
-            db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
-                session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
-                user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
-            db.execute("""CREATE TABLE IF NOT EXISTS free_claims (
-                guild_id TEXT NOT NULL, user_id TEXT NOT NULL, product TEXT NOT NULL,
-                code TEXT NOT NULL, claimed_at INTEGER NOT NULL,
-                PRIMARY KEY(guild_id,user_id,product))""")
-
-    def _ensure_commerce_schema(self) -> None:
-        """Upgrade older Railway databases before any promo or claim request."""
-        with sqlite3.connect(self.oauth_db, timeout=30) as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS promo_codes (
-                guild_id TEXT NOT NULL, code TEXT NOT NULL, percent_off INTEGER NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1, max_uses INTEGER NOT NULL DEFAULT 0,
-                uses INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-                product TEXT NOT NULL DEFAULT 'all', PRIMARY KEY(guild_id,code))""")
-            if "product" not in {row[1] for row in db.execute("PRAGMA table_info(promo_codes)")}:
-                db.execute("ALTER TABLE promo_codes ADD COLUMN product TEXT NOT NULL DEFAULT 'all'")
-            db.execute("""CREATE TABLE IF NOT EXISTS promo_uses (
-                session_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, code TEXT NOT NULL,
-                user_id TEXT NOT NULL, used_at INTEGER NOT NULL)""")
-            db.execute("""CREATE TABLE IF NOT EXISTS free_claims (
-                guild_id TEXT NOT NULL, user_id TEXT NOT NULL, product TEXT NOT NULL,
-                code TEXT NOT NULL, claimed_at INTEGER NOT NULL,
-                PRIMARY KEY(guild_id,user_id,product))""")
-
-    def _oauth_configured(self) -> bool:
-        settings = self.bot.settings
-        return bool(settings.discord_client_id and settings.discord_client_secret and settings.discord_oauth_redirect_uri and settings.oauth_state_secret)
-
-    def _oauth_state(self, mode: str = "member") -> str:
-        issued = str(int(time.time()))
-        nonce = secrets.token_urlsafe(16)
-        mode = "dashboard" if mode == "dashboard" else "member"
-        payload = f"{issued}.{nonce}.{mode}"
-        signature = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        return f"{payload}.{signature}"
-
-    def _oauth_state_mode(self, state: str) -> str | None:
-        try:
-            issued, nonce, mode, signature = state.split(".", 3)
-            payload = f"{issued}.{nonce}.{mode}"
-            expected = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(signature, expected) and abs(int(time.time()) - int(issued)) <= 900 and mode in {"member", "dashboard"}:
-                return mode
-            return None
-        except (AttributeError, TypeError, ValueError):
-            return None
-
-    def _valid_oauth_state(self, state: str) -> bool:
-        return self._oauth_state_mode(state) is not None
-
-    def _dashboard_session(self, user_id: int, expires_at: int | None = None) -> str:
-        expires_at = expires_at or int(time.time()) + 86400
-        payload = f"{user_id}.{expires_at}"
-        signature = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        return f"{payload}.{signature}"
-
-    def _dashboard_session_user(self, token: str) -> int | None:
-        try:
-            user_id, expires_at, signature = token.split(".", 2)
-            payload = f"{user_id}.{expires_at}"
-            expected = hmac.new(self.bot.settings.oauth_state_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            value = int(user_id)
-            if hmac.compare_digest(signature, expected) and int(expires_at) >= int(time.time()) and value in self.bot.settings.owner_ids:
-                return value
-        except (AttributeError, TypeError, ValueError):
-            pass
-        return None
-
-
-    def _authorizations(self) -> list[dict[str, Any]]:
-        with sqlite3.connect(self.oauth_db) as db:
-            db.row_factory = sqlite3.Row
-            return [dict(row) for row in db.execute("SELECT * FROM oauth_authorizations ORDER BY authorized_at DESC")]
-
-    async def _fresh_access_token(self, authorization: dict[str, Any]) -> str | None:
-        if int(authorization["expires_at"]) > int(time.time()) + 60:
-            return str(authorization["access_token"])
-        refresh_token = authorization.get("refresh_token")
-        if not refresh_token:
-            return None
-        form = {
-            "client_id": self.bot.settings.discord_client_id,
-            "client_secret": self.bot.settings.discord_client_secret,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        }
-        async with ClientSession() as session:
-            async with session.post("https://discord.com/api/v10/oauth2/token", data=form) as response:
-                if response.status != 200:
-                    return None
-                tokens = await response.json()
-        expires_at = int(time.time()) + int(tokens.get("expires_in", 0))
-        with sqlite3.connect(self.oauth_db) as db:
-            db.execute(
-                "UPDATE oauth_authorizations SET access_token=?, refresh_token=?, expires_at=?, scope=? WHERE user_id=?",
-                (tokens["access_token"], tokens.get("refresh_token") or refresh_token, expires_at, tokens.get("scope", "identify guilds.join"), authorization["user_id"]),
-            )
-        return str(tokens["access_token"])
+        self.tts_queues: dict[int, asyncio.Queue[dict[str, Any]]] = {}
+        self.tts_workers: dict[int, asyncio.Task[None]] = {}
+        self.tts_cooldowns: dict[tuple[int, int], float] = {}
+        self.tts_generation_lock = asyncio.Semaphore(2)
 
     def require_token(self, request: web.Request) -> None:
         expected = getattr(self.bot.settings, "dashboard_token", None)
         provided = request.query.get("token") or request.headers.get("x-dashboard-token")
-        session_user = self._dashboard_session_user(request.cookies.get("ain_dashboard_session", "")) if self._oauth_configured() else None
-        if session_user is not None:
-            return
-        if expected and provided == expected:
-            return
-        raise web.HTTPForbidden(text=json.dumps({"error": "Sign in with an owner Discord account or enter the correct dashboard token."}), content_type="application/json")
+        if not expected:
+            raise web.HTTPUnauthorized(text=json.dumps({"error": "Set DASHBOARD_TOKEN in Railway Variables first."}), content_type="application/json")
+        if provided != expected:
+            raise web.HTTPForbidden(text=json.dumps({"error": "Wrong dashboard token."}), content_type="application/json")
 
     def guild_or_404(self, guild_id: str) -> discord.Guild:
         guild = self.bot.get_guild(int(guild_id))
         if guild is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "That server is not connected to this bot."}), content_type="application/json")
         return guild
+
+    @staticmethod
+    def _env_ids(name: str) -> set[int]:
+        return {int(value.strip()) for value in os.getenv(name, "").split(",") if value.strip().isdigit()}
+
+    def require_tts_controller(self, guild: discord.Guild, body: dict[str, Any]) -> discord.Member:
+        actor_id = int(body.get("actor_id", 0) or 0)
+        member = guild.get_member(actor_id)
+        if member is None:
+            raise web.HTTPForbidden(text=json.dumps({"error": "Enter your Discord user ID to use Text to Speech."}), content_type="application/json")
+        allowed_users = self._env_ids("TTS_ALLOWED_USER_IDS") | set(getattr(self.bot.settings, "owner_ids", set()))
+        allowed_roles = self._env_ids("TTS_ALLOWED_ROLE_IDS")
+        allowed = member.id == guild.owner_id or member.id in allowed_users or any(role.id in allowed_roles for role in member.roles)
+        if not allowed:
+            raise web.HTTPForbidden(text=json.dumps({"error": "Only the server owner or an approved TTS user/role can use this control."}), content_type="application/json")
+        return member
+
+    def require_panel_controller(self, guild: discord.Guild, body: dict[str, Any]) -> discord.Member:
+        actor_id = int(body.get("actor_id", 0) or 0)
+        member = guild.get_member(actor_id)
+        if member is None:
+            raise web.HTTPForbidden(text=json.dumps({"error": "Enter your Discord user ID to edit server panels."}), content_type="application/json")
+        allowed_users = self._env_ids("PANEL_ALLOWED_USER_IDS") | set(getattr(self.bot.settings, "owner_ids", set()))
+        allowed_roles = self._env_ids("PANEL_ALLOWED_ROLE_IDS")
+        allowed = member.id == guild.owner_id or member.id in allowed_users or any(role.id in allowed_roles for role in member.roles)
+        if not allowed:
+            raise web.HTTPForbidden(text=json.dumps({"error": "Only the server owner or an approved panel user/role can edit panels."}), content_type="application/json")
+        return member
+
+    @staticmethod
+    def panel_defaults() -> dict[str, Any]:
+        return {
+            "layout": "compact",
+            "color": "#5865f2",
+            "title": "Voice Channel Controls",
+            "description": "Manage your temporary voice channels with the commands below.",
+            "fields": "/vc count | View active users\n/vc rename <name> | Rename your room\n/vc lock | Lock room\n/vc unlock | Unlock room\n/vc permit <user> | Permit user\n/vc reject <user> | Reject user\n/vc limit <1-100> | Set room limit\n/vc transfer <user> | Transfer ownership",
+            "footer": "AIN Bot • Server controls",
+            "thumbnail_url": "",
+        }
+
+    def normalize_panel(self, body: dict[str, Any]) -> dict[str, Any]:
+        defaults = self.panel_defaults()
+        layout = str(body.get("layout", defaults["layout"]))
+        if layout not in {"compact", "cards", "minimal"}:
+            layout = "compact"
+        color = str(body.get("color", defaults["color"])).strip()
+        if len(color) != 7 or not color.startswith("#"):
+            color = defaults["color"]
+        try:
+            int(color[1:], 16)
+        except ValueError:
+            color = defaults["color"]
+        thumbnail = str(body.get("thumbnail_url", "")).strip()[:500]
+        if thumbnail and not thumbnail.startswith(("https://", "http://")):
+            thumbnail = ""
+        return {
+            "layout": layout,
+            "color": color,
+            "title": str(body.get("title", defaults["title"])).strip()[:120] or defaults["title"],
+            "description": str(body.get("description", defaults["description"])).strip()[:1000],
+            "fields": str(body.get("fields", defaults["fields"])).strip()[:3500],
+            "footer": str(body.get("footer", defaults["footer"])).strip()[:200],
+            "thumbnail_url": thumbnail,
+        }
+
+    def make_panel_embed(self, design: dict[str, Any]) -> discord.Embed:
+        rows: list[tuple[str, str]] = []
+        for line in design["fields"].splitlines():
+            if not line.strip():
+                continue
+            command, _, explanation = line.partition("|")
+            rows.append((command.strip()[:256], explanation.strip()[:1024]))
+            if len(rows) >= 25:
+                break
+        color = discord.Color(int(design["color"][1:], 16))
+        embed_out = discord.Embed(title=design["title"], description=design["description"] or None, color=color)
+        if design["layout"] == "compact":
+            lines = ["**Commands**                         **Usage**"]
+            lines.extend(f"`{command}`\n{explanation}" for command, explanation in rows)
+            embed_out.description = (((design["description"] + "\n\n") if design["description"] else "") + "\n".join(lines))[:4096]
+        elif design["layout"] == "cards":
+            for command, explanation in rows:
+                embed_out.add_field(name=command, value=explanation or "—", inline=True)
+        else:
+            lines = [f"**{command}** — {explanation}" if explanation else f"**{command}**" for command, explanation in rows]
+            embed_out.description = (((design["description"] + "\n\n") if design["description"] else "") + "\n".join(lines))[:4096]
+        if design["footer"]:
+            embed_out.set_footer(text=design["footer"])
+        if design["thumbnail_url"]:
+            embed_out.set_thumbnail(url=design["thumbnail_url"])
+        return embed_out
 
     def command_list(self) -> list[dict[str, str]]:
         commands_out: list[dict[str, str]] = []
@@ -916,478 +523,12 @@ class Dashboard:
             raise web.HTTPForbidden(text=json.dumps({"error": "Bot role is not high enough to manage that role."}), content_type="application/json")
 
     async def index(self, _: web.Request) -> web.Response:
-        return web.Response(
-            text=dashboard_html(),
-            content_type="text/html",
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"},
-        )
-
-    async def oauth_start(self, _: web.Request) -> web.Response:
-        if not self._oauth_configured():
-            raise web.HTTPServiceUnavailable(text="Discord OAuth is not configured yet.")
-        query = urllib.parse.urlencode({
-            "client_id": self.bot.settings.discord_client_id,
-            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
-            "response_type": "code",
-            "scope": "identify guilds.join",
-            "state": self._oauth_state("member"),
-            "prompt": "consent",
-        })
-        raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
-
-    async def dashboard_oauth_start(self, _: web.Request) -> web.Response:
-        if not self._oauth_configured():
-            raise web.HTTPServiceUnavailable(text="Discord OAuth is not configured yet.")
-        query = urllib.parse.urlencode({
-            "client_id": self.bot.settings.discord_client_id,
-            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
-            "response_type": "code",
-            "scope": "identify",
-            "state": self._oauth_state("dashboard"),
-            "prompt": "consent",
-        })
-        raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
-
-    async def oauth_callback(self, request: web.Request) -> web.Response:
-        state = request.query.get("state", "")
-        mode = self._oauth_state_mode(state)
-        if not self._oauth_configured() or mode is None:
-            raise web.HTTPBadRequest(text="Invalid or expired authorization request.")
-        code = request.query.get("code")
-        if not code:
-            raise web.HTTPBadRequest(text="Discord authorization was cancelled or no code was returned.")
-        form = {
-            "client_id": self.bot.settings.discord_client_id,
-            "client_secret": self.bot.settings.discord_client_secret,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": self.bot.settings.discord_oauth_redirect_uri,
-        }
-        async with ClientSession() as session:
-            async with session.post("https://discord.com/api/v10/oauth2/token", data=form) as response:
-                tokens = await response.json()
-                if response.status != 200:
-                    raise web.HTTPBadRequest(text="Discord could not complete authorization.")
-            headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-            async with session.get("https://discord.com/api/v10/users/@me", headers=headers) as response:
-                user = await response.json()
-                if response.status != 200:
-                    raise web.HTTPBadRequest(text="Discord could not identify the authorized user.")
-        if mode == "dashboard":
-            user_id = int(user["id"])
-            if user_id not in self.bot.settings.owner_ids:
-                raise web.HTTPForbidden(text="That Discord account is not listed in OWNER_IDS.")
-            response = web.HTTPFound("/")
-            response.set_cookie("ain_dashboard_session", self._dashboard_session(user_id), max_age=86400, httponly=True, secure=True, samesite="Lax")
-            raise response
-        expires_at = int(time.time()) + int(tokens.get("expires_in", 0))
-        username = user.get("global_name") or user.get("username") or user["id"]
-        with sqlite3.connect(self.oauth_db) as db:
-            db.execute(
-                """INSERT INTO oauth_authorizations
-                   (user_id, username, access_token, refresh_token, expires_at, scope, authorized_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,
-                   access_token=excluded.access_token, refresh_token=excluded.refresh_token,
-                   expires_at=excluded.expires_at, scope=excluded.scope, authorized_at=excluded.authorized_at""",
-                (str(user["id"]), str(username), tokens["access_token"], tokens.get("refresh_token"), expires_at, tokens.get("scope", "identify guilds.join"), int(time.time())),
-            )
-        return web.Response(
-            text="<!doctype html><meta charset='utf-8'><title>AIN authorized</title><body style='font-family:system-ui;background:#09070d;color:#fff;padding:3rem'><h1>Authorization complete</h1><p>You explicitly authorized AIN to add your Discord account to a server when an AIN administrator starts a transfer. You can close this window.</p></body>",
-            content_type="text/html",
-        )
-
-    async def transfer_status(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        source = self.guild_or_404(request.query.get("source_id", "0"))
-        destination = self.guild_or_404(request.query.get("destination_id", "0"))
-        authorized = self._authorizations()
-        eligible = [row for row in authorized if source.get_member(int(row["user_id"])) and not destination.get_member(int(row["user_id"]))]
-        return web.json_response({
-            "authorized": len(authorized),
-            "eligible": len(eligible),
-            "already_in_destination": sum(1 for row in authorized if destination.get_member(int(row["user_id"]))),
-            "oauth_configured": self._oauth_configured(),
-        })
-
-    async def transfer_members(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        body = await request.json()
-        source = self.guild_or_404(str(body.get("source_id", "0")))
-        destination = self.guild_or_404(str(body.get("destination_id", "0")))
-        if source.id == destination.id:
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose two different servers."}), content_type="application/json")
-        if destination.me is None or not destination.me.guild_permissions.manage_guild:
-            raise web.HTTPForbidden(text=json.dumps({"error": "The bot needs Manage Server in the destination server."}), content_type="application/json")
-        eligible = [row for row in self._authorizations() if source.get_member(int(row["user_id"])) and not destination.get_member(int(row["user_id"]))]
-        added = failed = expired = 0
-        async with ClientSession() as session:
-            for authorization in eligible:
-                access_token = await self._fresh_access_token(authorization)
-                if not access_token:
-                    expired += 1
-                    continue
-                url = f"https://discord.com/api/v10/guilds/{destination.id}/members/{authorization['user_id']}"
-                headers = {"Authorization": f"Bot {self.bot.settings.discord_token}", "Content-Type": "application/json"}
-                async with session.put(url, headers=headers, json={"access_token": access_token}) as response:
-                    if response.status in {201, 204}:
-                        added += 1
-                    else:
-                        failed += 1
-        return web.json_response({"eligible": len(eligible), "added": added, "failed": failed, "reauthorization_required": expired})
-
-    async def create_transfer_invite(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        body = await request.json()
-        destination = self.guild_or_404(str(body.get("destination_id", "0")))
-        channel = next((c for c in destination.text_channels if c.permissions_for(destination.me).create_instant_invite), None) if destination.me else None
-        if channel is None:
-            raise web.HTTPForbidden(text=json.dumps({"error": "The bot needs Create Invite in a destination text channel."}), content_type="application/json")
-        invite = await channel.create_invite(max_age=86400, max_uses=0, unique=True, reason="AIN dashboard member transfer fallback")
-        return web.json_response({"url": invite.url, "expires_in": 86400})
+        return web.Response(text=dashboard_html(), content_type="text/html")
 
     async def guilds(self, request: web.Request) -> web.Response:
         self.require_token(request)
         data = [{"id": str(guild.id), "name": guild.name, "members": guild.member_count or 0} for guild in self.bot.guilds]
         return web.json_response({"guilds": data})
-
-    async def owner_ids(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        owners = []
-        for user_id in sorted(self.bot.settings.owner_ids):
-            user = self.bot.get_user(user_id)
-            if user is None:
-                try:
-                    user = await self.bot.fetch_user(user_id)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    user = None
-            owners.append({"id": str(user_id), "name": str(user) if user else "Unknown Discord user"})
-        return web.json_response({"owners": owners})
-
-    async def add_owner_id(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        body = await request.json()
-        raw_id = str(body.get("user_id", "")).strip()
-        if not raw_id.isdigit() or len(raw_id) < 15:
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Enter a valid Discord user ID."}), content_type="application/json")
-        user_id = int(raw_id)
-        try:
-            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Discord could not find that user ID."}), content_type="application/json")
-        self.bot.settings.owner_ids.add(user_id)
-        self._save_owner_ids()
-        return web.json_response({"ok": True, "owner": {"id": raw_id, "name": str(user)}})
-
-    async def remove_owner_id(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        body = await request.json()
-        raw_id = str(body.get("user_id", "")).strip()
-        if not raw_id.isdigit():
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Invalid Discord user ID."}), content_type="application/json")
-        self.bot.settings.owner_ids.discard(int(raw_id))
-        self._save_owner_ids()
-        return web.json_response({"ok": True})
-
-    async def vc_offer_get(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        defaults = {
-            "enabled": True,
-            "title": "Voice Access Options",
-            "message": "You were removed from a temporary voice channel. If you want additional VC access, use one of the options below.",
-            "vc_perms_price": "15", "anti_reject_price": "20", "godmode_price": "30", "all_price": "45",
-            "vc_perms_url": "", "anti_reject_url": "", "godmode_url": "", "all_url": "",
-        }
-        return web.json_response({"offer": {**defaults, **settings.get("vc_reject_offer", {})}})
-
-    async def vc_offer_save(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        body = await request.json()
-        offer = {
-            "enabled": bool(body.get("enabled", True)),
-            "title": str(body.get("title", "Voice Access Options")).strip()[:256],
-            "message": str(body.get("message", "")).strip()[:3000],
-        }
-        for key in ("vc_perms", "anti_reject", "godmode", "all"):
-            price = str(body.get(f"{key}_price", "")).strip()
-            try:
-                numeric_price = float(price)
-                if numeric_price < 0 or numeric_price > 100000:
-                    raise ValueError
-            except ValueError:
-                raise web.HTTPBadRequest(text=json.dumps({"error": f"Enter a valid {key.replace('_', ' ')} price."}), content_type="application/json")
-            offer[f"{key}_price"] = f"{numeric_price:g}"
-            url = str(body.get(f"{key}_url", "")).strip()
-            parsed = urllib.parse.urlparse(url) if url else None
-            if url and (parsed.scheme not in {"https", "http"} or not parsed.netloc):
-                raise web.HTTPBadRequest(text=json.dumps({"error": f"Enter a valid http(s) link for {key.replace('_', ' ')}."}), content_type="application/json")
-            offer[f"{key}_url"] = url
-        await self.bot.db.set_settings_value(guild.id, "vc_reject_offer", offer, self.bot.settings.default_prefix)
-        return web.json_response({"ok": True, "offer": offer})
-
-    def _valid_shop_signature(self, guild_id: str, user_id: str, signature: str) -> bool:
-        secret = self.bot.settings.oauth_state_secret or self.bot.settings.dashboard_token
-        if not secret or not guild_id.isdigit() or not user_id.isdigit():
-            return False
-        expected = hmac.new(secret.encode(), f"{guild_id}:{user_id}".encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-
-    async def shop(self, request: web.Request) -> web.Response:
-        self._ensure_commerce_schema()
-        guild_id = request.query.get("guild_id", "")
-        user_id = request.query.get("user_id", "")
-        signature = request.query.get("signature", "")
-        selected = request.query.get("product", "")
-        promo = request.query.get("promo", "").strip().upper()[:32]
-        if not self._valid_shop_signature(guild_id, user_id, signature):
-            raise web.HTTPForbidden(text="This checkout link is invalid or incomplete.")
-        guild = self.guild_or_404(guild_id)
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        offer = settings.get("vc_reject_offer", {})
-        products = [
-            ("vc_perms", "VC Perms", offer.get("vc_perms_price", "15"), "Voice access permissions"),
-            ("anti_reject", "Anti-Reject", offer.get("anti_reject_price", "20"), "Protected VC access"),
-            ("godmode", "Godmode", offer.get("godmode_price", "30"), "Full VC protection"),
-            ("all", "All Access", offer.get("all_price", "45"), "Complete access bundle"),
-        ]
-        promo_status = ""
-        promo_row = None
-        if promo:
-            with sqlite3.connect(self.oauth_db) as db:
-                promo_row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
-            applies = bool(promo_row) and (promo_row[4] == "all" or not selected or promo_row[4] == selected or (promo_row[4] == "all_access" and selected == "all"))
-            available = bool(promo_row) and bool(promo_row[1]) and (promo_row[2] == 0 or promo_row[3] < promo_row[2])
-            promo_status = f'<p class="promo-result good">Code claimed — {int(promo_row[0])}% off.</p>' if applies and available else '<p class="promo-result bad">Code invalid.</p>'
-        cards_list = []
-        for key, name, price, detail in products:
-            code_applies = bool(promo_row) and (promo_row[4] == "all" or promo_row[4] == key or (promo_row[4] == "all_access" and key == "all"))
-            is_free = bool(promo_row) and int(promo_row[0]) == 100 and bool(promo_row[1]) and (promo_row[2] == 0 or promo_row[3] < promo_row[2]) and code_applies
-            route = "/claim/free" if is_free else "/checkout/start"
-            button = "Click to claim" if is_free else f"Choose {name}"
-            shown_price = "FREE" if is_free else f"${html.escape(str(price))}"
-            cards_list.append(f'''<article class="product{' selected' if key == selected else ''}"><small>{html.escape(guild.name)}</small><h2>{html.escape(name)}</h2><div class="price{' free' if is_free else ''}">{shown_price}</div><p>{html.escape(detail)}</p><a href="{route}?{urllib.parse.urlencode({'guild_id':guild_id,'user_id':user_id,'signature':signature,'product':key,'promo':promo})}">{html.escape(button)}</a></article>''')
-        cards = "".join(cards_list)
-        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Voice Access</title><style>
-        :root{{color-scheme:dark;--bg:#111210;--card:#1d1e1b;--line:#373832;--text:#f4f1e8;--muted:#aaa99f;--accent:#ff7043}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px Segoe UI,Arial,sans-serif}}main{{width:min(1050px,calc(100% - 28px));margin:auto;padding:60px 0}}header{{margin-bottom:28px}}h1{{font-size:clamp(38px,7vw,72px);letter-spacing:-.055em;margin:0}}header p,p{{color:var(--muted);line-height:1.55}}.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}}.product{{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:22px}}.selected{{border-color:var(--accent)}}small{{color:var(--accent);text-transform:uppercase;letter-spacing:.12em}}h2{{font-size:24px;margin:14px 0 4px}}.price{{font-size:42px;font-weight:750}}.price.free{{color:#9fd06f}}a,button{{display:block;text-align:center;text-decoration:none;background:#2b2c27;border:1px solid #4b4c44;color:var(--text);padding:12px;border-radius:10px;font-weight:700;margin-top:18px}}input{{width:100%;background:#151613;border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px}}.promo{{margin:0 0 18px;padding:18px;border:1px solid var(--line);border-radius:14px}}.promo-result{{font-weight:700;margin:12px 0 0}}.good{{color:#b9df8b}}.bad{{color:#ff9c80}}.methods{{margin-top:22px;border-top:1px solid var(--line);padding-top:18px}}.methods span{{display:inline-block;border:1px solid var(--line);padding:7px 10px;border-radius:999px;margin:3px;color:var(--muted)}}@media(max-width:650px){{.grid{{grid-template-columns:1fr}}main{{padding-top:30px}}}}</style><main><header><h1>Choose your access</h1><p>Select a package, then complete payment securely through the hosted checkout.</p></header><form class="promo" method="get"><input type="hidden" name="guild_id" value="{html.escape(guild_id)}"><input type="hidden" name="user_id" value="{html.escape(user_id)}"><input type="hidden" name="signature" value="{html.escape(signature)}"><input type="hidden" name="product" value="{html.escape(selected)}"><label>Promo code</label><input name="promo" value="{html.escape(promo)}" placeholder="Enter code"><button type="submit">Apply code</button>{promo_status}</form><section class="grid">{cards}</section><div class="methods"><span>Visa / credit card</span><span>Cash App Pay</span><span>Eligible crypto wallets</span><p>Available payment methods depend on your location and the seller's Stripe settings.</p></div></main>'''
-        return web.Response(text=page, content_type="text/html")
-
-    async def _free_claim(self, request: web.Request) -> web.Response:
-        self._ensure_commerce_schema()
-        guild_id = request.query.get("guild_id", "")
-        user_id = request.query.get("user_id", "")
-        signature = request.query.get("signature", "")
-        product = request.query.get("product", "")
-        promo = request.query.get("promo", "").strip().upper()[:32]
-        if not self._valid_shop_signature(guild_id, user_id, signature) or product not in {"vc_perms", "anti_reject", "godmode", "all"}:
-            raise web.HTTPForbidden(text="Invalid claim link.")
-        guild = self.guild_or_404(guild_id)
-        member = guild.get_member(int(user_id)) if user_id.isdigit() else None
-        if member is None:
-            raise web.HTTPBadRequest(text="Your Discord account is not available in this server.")
-        with sqlite3.connect(self.oauth_db) as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
-            applies = row and (row[4] == "all" or row[4] == product or (row[4] == "all_access" and product == "all"))
-            if not row or int(row[0]) != 100 or not row[1] or not applies or (row[2] and row[3] >= row[2]):
-                raise web.HTTPBadRequest(text="Code invalid.")
-            inserted = db.execute("INSERT OR IGNORE INTO free_claims(guild_id,user_id,product,code,claimed_at) VALUES(?,?,?,?,?)", (str(guild.id), user_id, product, promo, int(time.time())))
-            if inserted.rowcount:
-                claim_id = f"free:{guild.id}:{user_id}:{product}:{promo}"
-                db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (claim_id, str(guild.id), promo, user_id, int(time.time())))
-                db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(guild.id), promo))
-        fulfilled, fulfillment_detail = await self.fulfill_access(str(guild.id), user_id, product)
-        if not fulfilled:
-            raise web.HTTPServiceUnavailable(text=f"The claim was saved, but Discord could not add the role: {fulfillment_detail} You can retry after fixing the bot role.")
-        product_name = {"vc_perms":"VC Perms", "anti_reject":"Anti-Reject", "godmode":"Godmode", "all":"All Access"}[product]
-        discord_url = f"https://discord.com/channels/{guild.id}"
-        page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim complete</title><style>:root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(560px,calc(100% - 28px));background:#1d1e1b;border:1px solid #373832;border-radius:18px;padding:30px}}small{{color:#9fd06f;text-transform:uppercase;letter-spacing:.12em}}h1{{font-size:42px;letter-spacing:-.04em;margin:12px 0}}p{{color:#aaa99f;line-height:1.6}}a{{display:block;margin-top:22px;padding:13px;text-align:center;text-decoration:none;border-radius:10px;background:#292a26;border:1px solid #4b4c44;color:#f4f1e8;font-weight:700}}</style><main><small>Claim complete</small><h1>Items have been added to your account</h1><p><b>{html.escape(product_name)}</b> is now connected to <b>{html.escape(member.display_name)}</b> in {html.escape(guild.name)}. The <b>{html.escape(fulfillment_detail)}</b> role was added automatically.</p><a href="{discord_url}">Back to Discord</a></main>'''
-        return web.Response(text=page, content_type="text/html")
-
-    async def free_claim(self, request: web.Request) -> web.Response:
-        try:
-            return await self._free_claim(request)
-        except web.HTTPException:
-            raise
-        except Exception as error:
-            self.bot.log.exception("Free store claim failed")
-            detail = html.escape(f"{type(error).__name__}: {error}")
-            page = f'''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claim issue</title><style>:root{{color-scheme:dark}}body{{margin:0;background:#111210;color:#f4f1e8;font:17px Segoe UI,Arial;display:grid;place-items:center;min-height:100vh}}main{{max-width:620px;border:1px solid #373832;background:#1d1e1b;border-radius:16px;padding:28px}}h1{{margin-top:0}}p{{color:#aaa99f;line-height:1.6}}code{{display:block;overflow-wrap:anywhere;color:#ff9c80}}</style><main><h1>Claim could not finish</h1><p>The bot saved the error instead of showing a blank server page. Fix the item below, then click the claim button again.</p><code>{detail}</code></main>'''
-            return web.Response(text=page, content_type="text/html", status=500)
-
-    async def checkout_start(self, request: web.Request) -> web.Response:
-        guild_id, user_id = request.query.get("guild_id", ""), request.query.get("user_id", "")
-        signature, product = request.query.get("signature", ""), request.query.get("product", "")
-        if not self._valid_shop_signature(guild_id, user_id, signature):
-            raise web.HTTPForbidden(text="Invalid checkout link.")
-        product_names = {"vc_perms": "VC Perms", "anti_reject": "Anti-Reject", "godmode": "Godmode", "all": "All Access"}
-        if product not in product_names:
-            raise web.HTTPBadRequest(text="Unknown product.")
-        guild = self.guild_or_404(guild_id)
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        offer = settings.get("vc_reject_offer", {})
-        default_prices = {"vc_perms": "15", "anti_reject": "20", "godmode": "30", "all": "45"}
-        price = float(offer.get(f"{product}_price", default_prices[product]))
-        promo = request.query.get("promo", "").strip().upper()[:32]
-        percent_off = 0
-        if promo:
-            with sqlite3.connect(self.oauth_db) as db:
-                row = db.execute("SELECT percent_off,active,max_uses,uses,product FROM promo_codes WHERE guild_id=? AND UPPER(code)=?", (str(guild.id), promo)).fetchone()
-            applies = row and (row[4] == "all" or row[4] == product or (row[4] == "all_access" and product == "all"))
-            if applies and row[1] and (row[2] == 0 or row[3] < row[2]):
-                percent_off = int(row[0])
-            else:
-                raise web.HTTPBadRequest(text="That promo code is invalid, inactive, or fully used.")
-        final_price = max(0.5, price * (100 - percent_off) / 100)
-        secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
-        public_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-        if not secret_key or not public_url:
-            raise web.HTTPServiceUnavailable(text="Checkout is not configured yet. Set STRIPE_SECRET_KEY and PUBLIC_BASE_URL.")
-        form = {
-            "mode": "payment", "success_url": f"{public_url}/checkout/success", "cancel_url": f"{public_url}/shop?{urllib.parse.urlencode(dict(request.query))}",
-            "line_items[0][price_data][currency]": "usd", "line_items[0][price_data][product_data][name]": product_names[product],
-            "line_items[0][price_data][unit_amount]": str(round(final_price * 100)), "line_items[0][quantity]": "1",
-            "metadata[guild_id]": guild_id, "metadata[user_id]": user_id, "metadata[product]": product,
-            "metadata[promo_code]": promo, "metadata[percent_off]": str(percent_off),
-            "client_reference_id": f"discord_{user_id}",
-        }
-        async with ClientSession() as session:
-            async with session.post("https://api.stripe.com/v1/checkout/sessions", data=form, auth=BasicAuth(secret_key, "")) as response:
-                data = await response.json()
-                if response.status >= 300 or not data.get("url"):
-                    self.bot.log.error("Stripe Checkout error: %s", data.get("error", {}).get("message", data))
-                    raise web.HTTPBadGateway(text="The payment provider could not start checkout.")
-        raise web.HTTPFound(data["url"])
-
-    async def checkout_success(self, _: web.Request) -> web.Response:
-        return web.Response(text="<!doctype html><meta charset='utf-8'><body style='background:#111210;color:#f4f1e8;font:18px Segoe UI;padding:4rem'><h1>Payment received</h1><p>Your payment is being verified. Server staff can see confirmed payments in their dashboard.</p></body>", content_type="text/html")
-
-    async def stripe_webhook(self, request: web.Request) -> web.Response:
-        raw = await request.read()
-        signature_header = request.headers.get("Stripe-Signature", "")
-        secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-        pieces = [part.split("=", 1) for part in signature_header.split(",") if "=" in part]
-        timestamp = next((value for key, value in pieces if key == "t"), "")
-        signatures = [value for key, value in pieces if key == "v1"]
-        if not secret or not timestamp.isdigit() or abs(int(time.time()) - int(timestamp)) > 300:
-            raise web.HTTPBadRequest(text="Invalid webhook signature.")
-        expected = hmac.new(secret.encode(), timestamp.encode() + b"." + raw, hashlib.sha256).hexdigest()
-        if not any(hmac.compare_digest(expected, value) for value in signatures):
-            raise web.HTTPBadRequest(text="Invalid webhook signature.")
-        event = json.loads(raw)
-        if event.get("type") == "checkout.session.completed":
-            session = event.get("data", {}).get("object", {})
-            if session.get("payment_status") == "paid":
-                metadata = session.get("metadata", {})
-                customer = session.get("customer_details") or {}
-                with sqlite3.connect(self.oauth_db) as db:
-                    db.execute("""INSERT OR IGNORE INTO payment_logs(session_id,guild_id,user_id,product,amount,currency,customer_email,payment_methods,paid_at,payment_intent,refunded) VALUES(?,?,?,?,?,?,?,?,?,?,0)""",
-                        (session["id"], str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")), int(session.get("amount_total", 0)), str(session.get("currency", "usd")), customer.get("email"), ", ".join(session.get("payment_method_types", [])), int(time.time()), str(session.get("payment_intent", ""))))
-                    promo = str(metadata.get("promo_code", "")).upper()
-                    if promo:
-                        inserted = db.execute("INSERT OR IGNORE INTO promo_uses(session_id,guild_id,code,user_id,used_at) VALUES(?,?,?,?,?)", (session["id"], str(metadata.get("guild_id", "")), promo, str(metadata.get("user_id", "")), int(time.time())))
-                        if inserted.rowcount:
-                            db.execute("UPDATE promo_codes SET uses=uses+1 WHERE guild_id=? AND code=?", (str(metadata.get("guild_id", "")), promo))
-                fulfilled, detail = await self.fulfill_access(str(metadata.get("guild_id", "")), str(metadata.get("user_id", "")), str(metadata.get("product", "")))
-                if not fulfilled:
-                    self.bot.log.error("Automatic payment fulfillment failed for Stripe session %s: %s", session.get("id"), detail)
-                    raise web.HTTPServiceUnavailable(text="Payment was recorded but Discord role fulfillment will be retried.")
-        elif event.get("type") in {"charge.refunded", "charge.dispute.created"}:
-            charge = event.get("data", {}).get("object", {})
-            payment_intent = str(charge.get("payment_intent", ""))
-            if payment_intent:
-                with sqlite3.connect(self.oauth_db) as db:
-                    db.row_factory = sqlite3.Row
-                    row = db.execute("SELECT guild_id,user_id,product FROM payment_logs WHERE payment_intent=? ORDER BY paid_at DESC LIMIT 1", (payment_intent,)).fetchone()
-                    if row:
-                        db.execute("UPDATE payment_logs SET refunded=1 WHERE payment_intent=?", (payment_intent,))
-                if row:
-                    removed, detail = await self.remove_access(str(row["guild_id"]), str(row["user_id"]), str(row["product"]), "Stripe refund or payment dispute")
-                    if not removed:
-                        self.bot.log.error("Could not remove refunded access for payment intent %s: %s", payment_intent, detail)
-        return web.json_response({"received": True})
-
-    async def payment_logs(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        with sqlite3.connect(self.oauth_db) as db:
-            db.row_factory = sqlite3.Row
-            rows = [dict(row) for row in db.execute("SELECT * FROM payment_logs WHERE guild_id=? ORDER BY paid_at DESC LIMIT 200", (str(guild.id),))]
-        for row in rows:
-            user = self.bot.get_user(int(row["user_id"])) if row["user_id"].isdigit() else None
-            row["username"] = str(user) if user else "Unknown user"
-            row["amount_display"] = f"{row['amount'] / 100:.2f} {row['currency'].upper()}"
-        return web.json_response({"payments": rows, "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY") and os.getenv("STRIPE_WEBHOOK_SECRET") and os.getenv("PUBLIC_BASE_URL"))})
-
-    async def promos(self, request: web.Request) -> web.Response:
-        self._ensure_commerce_schema()
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        if request.method == "POST":
-            body = await request.json()
-            code = "".join(ch for ch in str(body.get("code", "")).upper() if ch.isalnum() or ch in "-_")[:32]
-            percent = int(body.get("percent_off", 0) or 0)
-            max_uses = int(body.get("max_uses", 0) or 0)
-            product = str(body.get("product", "all"))
-            if product not in {"all", "vc_perms", "anti_reject", "godmode", "all_access"}:
-                product = "all"
-            if not code or not 1 <= percent <= 100 or max_uses < 0:
-                raise web.HTTPBadRequest(text=json.dumps({"error": "Enter a code, 1-100 percent off, and a valid max-use count."}), content_type="application/json")
-            with sqlite3.connect(self.oauth_db) as db:
-                db.execute("INSERT INTO promo_codes(guild_id,code,percent_off,active,max_uses,created_at,product) VALUES(?,?,?,?,?,?,?) ON CONFLICT(guild_id,code) DO UPDATE SET percent_off=excluded.percent_off,active=excluded.active,max_uses=excluded.max_uses,product=excluded.product", (str(guild.id), code, percent, int(bool(body.get("active", True))), max_uses, int(time.time()), product))
-        with sqlite3.connect(self.oauth_db) as db:
-            db.row_factory = sqlite3.Row
-            rows = [dict(row) for row in db.execute("SELECT p.*,GROUP_CONCAT(u.user_id) AS used_by FROM promo_codes p LEFT JOIN promo_uses u ON u.guild_id=p.guild_id AND u.code=p.code WHERE p.guild_id=? GROUP BY p.code ORDER BY p.created_at DESC", (str(guild.id),))]
-        for row in rows:
-            names = []
-            for raw_id in str(row.get("used_by") or "").split(","):
-                member = guild.get_member(int(raw_id)) if raw_id.isdigit() else None
-                if member:
-                    names.append(member.display_name)
-            row["used_by"] = ", ".join(names)
-        return web.json_response({"codes": rows})
-
-    async def giveaway_config(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        if request.method == "POST":
-            body = await request.json()
-            outcomes = [{"name": str(x.get("name", ""))[:80], "weight": min(int(x.get("weight", 1) or 1), 10000)} for x in body.get("outcomes", [])[:50] if str(x.get("name", "")).strip() and int(x.get("weight", 0) or 0) > 0]
-            await self.bot.db.set_settings_value(guild.id, "random_giveaway_outcomes", outcomes, self.bot.settings.default_prefix)
-        else:
-            outcomes = settings.get("random_giveaway_outcomes") or [{"name":"10% off","weight":35},{"name":"15% off","weight":25},{"name":"Nitro","weight":10},{"name":"$15 credit","weight":15}]
-        return web.json_response({"outcomes": outcomes})
-
-    async def live_channels(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        body = await request.json()
-        if body.get("action") == "mvp":
-            member = self.get_member_or_404(guild, body.get("member_id"))
-            await self.bot.db.set_settings_value(guild.id, "mvp_winner_id", member.id, self.bot.settings.default_prefix)
-        elif body.get("action") == "setup":
-            category = discord.utils.get(guild.categories, name="Server Stats") or await guild.create_category("Server Stats", reason="Dashboard live-channel setup")
-            try:
-                await category.edit(position=0, reason="Keep live stats near the top")
-            except discord.HTTPException:
-                pass
-            ids = {}
-            settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-            old = settings.get("stats_channels", {})
-            for key in ("members", "in vc", "top balance", "mvp winner", "giveaway winner"):
-                channel = guild.get_channel(int(old.get(key, 0) or 0))
-                if not isinstance(channel, discord.VoiceChannel):
-                    channel = await guild.create_voice_channel(f"{key.title()}: --", category=category, reason="Dashboard live-channel setup")
-                    await channel.set_permissions(guild.default_role, connect=False)
-                ids[key] = channel.id
-            await self.bot.db.set_settings_value(guild.id, "stats_channels", ids, self.bot.settings.default_prefix)
-        growth = self.bot.get_cog("GrowthSafety")
-        if growth:
-            await growth.update_stats(guild)
-        return web.json_response({"ok": True})
 
     async def summary(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1409,6 +550,7 @@ class Dashboard:
             "text_channels": text_channels,
             "members_list": [{"id": str(member.id), "name": member.display_name} for member in members],
             "role_list": [{"id": str(role.id), "name": role.name} for role in roles[:250]],
+            "tts_max_length": max(50, min(int(os.getenv("TTS_MAX_LENGTH", "500")), 900)),
         }
         payload.update(self.command_counts())
         return web.json_response(payload)
@@ -1417,11 +559,6 @@ class Dashboard:
         self.require_token(request)
         self.guild_or_404(request.match_info["guild_id"])
         return web.json_response({"commands": self.command_list()})
-
-    async def updates_api(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        rows = await self.bot.db.fetchall("SELECT released_on,title,notes FROM bot_updates ORDER BY released_on DESC,id DESC LIMIT 25")
-        return web.json_response({"updates": [dict(row) for row in rows]})
 
     async def search(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1552,6 +689,7 @@ class Dashboard:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
+        self.require_tts_controller(guild, body)
         channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
         if not isinstance(channel, discord.VoiceChannel):
             raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a valid voice channel."}), content_type="application/json")
@@ -1565,53 +703,198 @@ class Dashboard:
     async def leave_voice(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        self.require_tts_controller(guild, body)
+        await self._stop_tts(guild)
         current = guild.voice_client
         if current and current.is_connected():
             await current.disconnect(force=True)
         return web.json_response({"ok": True})
 
-    async def make_tts_file(self, text: str, voice: str) -> Path:
-        api_key = getattr(self.bot.settings, "openai_api_key", None)
-        if not api_key:
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Add OPENAI_API_KEY with credits to use type-to-talk."}), content_type="application/json")
-        safe_voice = voice if voice in {"alloy", "verse", "nova", "shimmer", "echo"} else "alloy"
-        path = Path(tempfile.gettempdir()) / f"ainbot-tts-{discord.utils.utcnow().timestamp()}.mp3"
-        payload = {"model": os.getenv("OPENAI_TTS_MODEL", "tts-1"), "voice": safe_voice, "input": text[:900]}
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        async with ClientSession() as session:
-            async with session.post("https://api.openai.com/v1/audio/speech", headers=headers, json=payload) as response:
-                if response.status >= 400:
-                    detail = await response.text()
-                    raise web.HTTPBadRequest(text=json.dumps({"error": f"TTS failed: {detail[:300]}"}), content_type="application/json")
-                path.write_bytes(await response.read())
+    TTS_VOICES = {
+        "female": ("en-US-AriaNeural", 0),
+        "male": ("en-US-GuyNeural", 0),
+        "deep": ("en-US-ChristopherNeural", -12),
+        "robotic": ("en-US-AndrewMultilingualNeural", -4),
+        "funny": ("en-US-AnaNeural", 16),
+    }
+
+    async def make_tts_file(self, text: str, voice: str, volume: int, speed: int, pitch: int) -> Path:
+        voice_name, style_pitch = self.TTS_VOICES.get(voice, self.TTS_VOICES["female"])
+        path = Path(tempfile.gettempdir()) / f"ainbot-tts-{os.getpid()}-{time.time_ns()}.mp3"
+        communicate = edge_tts.Communicate(
+            text,
+            voice_name,
+            rate=f"{speed - 100:+d}%",
+            volume=f"{volume - 100:+d}%",
+            pitch=f"{pitch + style_pitch:+d}Hz",
+        )
+        try:
+            async with self.tts_generation_lock:
+                await asyncio.wait_for(communicate.save(str(path)), timeout=30)
+        except Exception as exc:
+            path.unlink(missing_ok=True)
+            self.bot.log.warning("TTS generation failed: %s", exc)
+            raise RuntimeError("The free TTS service could not create audio. Check internet access and try again.") from exc
         return path
+
+    async def _stop_tts(self, guild: discord.Guild) -> None:
+        worker = self.tts_workers.pop(guild.id, None)
+        if worker and worker is not asyncio.current_task() and not worker.done():
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        queue = self.tts_queues.get(guild.id)
+        if queue:
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                    queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+        current = guild.voice_client
+        if current and (current.is_playing() or current.is_paused()):
+            current.stop()
+
+    async def _tts_worker(self, guild: discord.Guild) -> None:
+        queue = self.tts_queues[guild.id]
+        try:
+            while True:
+                job = await queue.get()
+                audio_path: Path | None = None
+                try:
+                    current = guild.voice_client
+                    channel = guild.get_channel(job["channel_id"])
+                    if not isinstance(channel, discord.VoiceChannel):
+                        continue
+                    if current is None or not current.is_connected():
+                        current = await channel.connect(self_deaf=True)
+                    elif current.channel != channel:
+                        await current.move_to(channel)
+                    audio_path = await self.make_tts_file(job["text"], job["voice"], job["volume"], job["speed"], job["pitch"])
+                    finished = asyncio.Event()
+                    loop = asyncio.get_running_loop()
+                    source = discord.FFmpegPCMAudio(str(audio_path), executable=ffmpeg_executable())
+                    current.play(source, after=lambda error: loop.call_soon_threadsafe(finished.set))
+                    await asyncio.wait_for(finished.wait(), timeout=180)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self.bot.log.exception("Queued dashboard TTS failed in guild %s", guild.id)
+                finally:
+                    if audio_path:
+                        audio_path.unlink(missing_ok=True)
+                    queue.task_done()
+        except asyncio.CancelledError:
+            current = guild.voice_client
+            if current and (current.is_playing() or current.is_paused()):
+                current.stop()
 
     async def speak_voice(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
+        actor = self.require_tts_controller(guild, body)
         text = str(body.get("text", "")).strip()
         if not text:
             raise web.HTTPBadRequest(text=json.dumps({"error": "Type something for the bot to say."}), content_type="application/json")
-        current = guild.voice_client
-        if current is None or not current.is_connected():
-            channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
-            if not isinstance(channel, discord.VoiceChannel):
-                raise web.HTTPBadRequest(text=json.dumps({"error": "Bot is not in VC. Pick a voice channel first."}), content_type="application/json")
-            current = await channel.connect(self_deaf=False)
-        if current.is_playing():
-            current.stop()
-        audio_path = await self.make_tts_file(text, str(body.get("voice", "alloy")))
+        max_length = max(50, min(int(os.getenv("TTS_MAX_LENGTH", "500")), 900))
+        if len(text) > max_length:
+            raise web.HTTPBadRequest(text=json.dumps({"error": f"Text is limited to {max_length} characters."}), content_type="application/json")
+        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+        if not isinstance(channel, discord.VoiceChannel):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a valid voice channel."}), content_type="application/json")
+        cooldown = max(1, int(os.getenv("TTS_COOLDOWN_SECONDS", "5")))
+        key = (guild.id, actor.id)
+        remaining = self.tts_cooldowns.get(key, 0) - time.monotonic()
+        if remaining > 0:
+            raise web.HTTPTooManyRequests(text=json.dumps({"error": f"Please wait {remaining:.1f} seconds before speaking again."}), content_type="application/json")
+        queue = self.tts_queues.setdefault(guild.id, asyncio.Queue(maxsize=max(1, int(os.getenv("TTS_QUEUE_LIMIT", "3")))))
+        if queue.full():
+            raise web.HTTPTooManyRequests(text=json.dumps({"error": "The TTS queue is full. Wait or press Stop."}), content_type="application/json")
+        job = {
+            "text": text,
+            "voice": str(body.get("voice", "female")),
+            "channel_id": channel.id,
+            "volume": max(0, min(int(body.get("volume", 100)), 200)),
+            "speed": max(50, min(int(body.get("speed", 100)), 200)),
+            "pitch": max(-50, min(int(body.get("pitch", 0)), 50)),
+        }
+        await queue.put(job)
+        self.tts_cooldowns[key] = time.monotonic() + cooldown
+        worker = self.tts_workers.get(guild.id)
+        if worker is None or worker.done():
+            self.tts_workers[guild.id] = asyncio.create_task(self._tts_worker(guild))
+        return web.json_response({"ok": True, "queued": queue.qsize()})
 
-        def cleanup(_: Exception | None = None, path: Path = audio_path) -> None:
-            try:
-                path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        source = discord.FFmpegPCMAudio(str(audio_path), executable=ffmpeg_executable())
-        current.play(source, after=cleanup)
+    async def stop_voice(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        self.require_tts_controller(guild, body)
+        await self._stop_tts(guild)
         return web.json_response({"ok": True})
+
+    async def voice_status(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        current = guild.voice_client
+        connected = bool(current and current.is_connected())
+        return web.json_response({
+            "connected": connected,
+            "channel": current.channel.name if connected and current.channel else None,
+            "playing": bool(current and current.is_playing()),
+            "queued": self.tts_queues.get(guild.id).qsize() if guild.id in self.tts_queues else 0,
+        })
+
+    async def preview_voice(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        self.require_tts_controller(guild, body)
+        text = str(body.get("text") or "Hello! This is your selected AIN Bot voice.").strip()[:160]
+        path = await self.make_tts_file(
+            text, str(body.get("voice", "female")),
+            max(0, min(int(body.get("volume", 100)), 200)),
+            max(50, min(int(body.get("speed", 100)), 200)),
+            max(-50, min(int(body.get("pitch", 0)), 50)),
+        )
+        try:
+            return web.Response(body=path.read_bytes(), content_type="audio/mpeg")
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def panel_get(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        design = self.panel_defaults()
+        design.update(settings.get("panel_design", {}))
+        return web.json_response(self.normalize_panel(design))
+
+    async def panel_save(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        actor = self.require_panel_controller(guild, body)
+        design = self.normalize_panel(body)
+        await self.bot.db.set_settings_value(guild.id, "panel_design", design, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "saved_by": str(actor.id), "design": design})
+
+    async def panel_send(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        actor = self.require_panel_controller(guild, body)
+        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
+        if not isinstance(channel, discord.TextChannel):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a valid text channel."}), content_type="application/json")
+        permissions = channel.permissions_for(guild.me)
+        if not permissions.send_messages or not permissions.embed_links:
+            raise web.HTTPForbidden(text=json.dumps({"error": "AIN needs Send Messages and Embed Links in that channel."}), content_type="application/json")
+        design = self.normalize_panel(body)
+        await self.bot.db.set_settings_value(guild.id, "panel_design", design, self.bot.settings.default_prefix)
+        message = await channel.send(embed=self.make_panel_embed(design))
+        return web.json_response({"ok": True, "message_id": str(message.id), "sent_by": str(actor.id)})
 
     async def send_message(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1863,117 +1146,6 @@ class Dashboard:
             logs.insert(0, {"event": "failed_cog", "text": f"{name}: {reason}"})
         return web.json_response({"logs": logs[:25]})
 
-    async def engagement_status(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        stickies = []
-        for channel_id, item in settings.get("sticky_messages", {}).items():
-            channel = guild.get_channel(int(channel_id))
-            stickies.append({
-                "channel_id": channel_id,
-                "channel_name": channel.name if isinstance(channel, discord.TextChannel) else channel_id,
-                "text": str(item.get("text", ""))[:240],
-                "refresh_after": int(item.get("refresh_after", 5)),
-            })
-        announcements = []
-        for item in settings.get("scheduled_announcements", []):
-            channel = guild.get_channel(int(item.get("channel_id", 0)))
-            announcements.append({
-                "id": int(item.get("id", 0)),
-                "channel_name": channel.name if isinstance(channel, discord.TextChannel) else str(item.get("channel_id", "missing")),
-                "title": str(item.get("title", "Announcement")),
-                "send_at": str(item.get("send_at", "unknown")),
-            })
-        temporary_roles = []
-        for item in settings.get("temporary_roles", []):
-            member = guild.get_member(int(item.get("member_id", 0)))
-            role = guild.get_role(int(item.get("role_id", 0)))
-            temporary_roles.append({
-                "member_name": member.display_name if member else str(item.get("member_id", "missing")),
-                "role_name": role.name if role else str(item.get("role_id", "missing")),
-                "expires_at": str(item.get("expires_at", "unknown")),
-            })
-        return web.json_response({"stickies": stickies, "announcements": announcements, "temporary_roles": temporary_roles})
-
-    async def engagement_sticky(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        body = await request.json()
-        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
-        if not isinstance(channel, discord.TextChannel):
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose a valid text channel."}), content_type="application/json")
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        sticky_data = settings.get("sticky_messages", {})
-        old = sticky_data.get(str(channel.id), {})
-        old_message_id = old.get("message_id")
-        if old_message_id:
-            try:
-                await (await channel.fetch_message(int(old_message_id))).delete()
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
-        if str(body.get("action", "set")) == "off":
-            sticky_data.pop(str(channel.id), None)
-        else:
-            text = str(body.get("text", "")).strip()[:4000]
-            if not text:
-                raise web.HTTPBadRequest(text=json.dumps({"error": "Type a sticky message first."}), content_type="application/json")
-            refresh_after = max(2, min(int(body.get("refresh_after", 5) or 5), 50))
-            posted = await channel.send(embed=await self.bot.themed_embed(guild.id, "Pinned Information", text))
-            sticky_data[str(channel.id)] = {"text": text, "refresh_after": refresh_after, "message_id": posted.id}
-        await self.bot.db.set_settings_value(guild.id, "sticky_messages", sticky_data, self.bot.settings.default_prefix)
-        return web.json_response({"ok": True})
-
-    async def engagement_announcement(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        body = await request.json()
-        action = str(body.get("action", "send"))
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        scheduled = settings.get("scheduled_announcements", [])
-        if action == "cancel":
-            item_id = int(body.get("id", 0) or 0)
-            scheduled = [item for item in scheduled if int(item.get("id", 0)) != item_id]
-            await self.bot.db.set_settings_value(guild.id, "scheduled_announcements", scheduled, self.bot.settings.default_prefix)
-            return web.json_response({"ok": True})
-        channel = guild.get_channel(int(body.get("channel_id", 0) or 0))
-        if not isinstance(channel, discord.TextChannel):
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Choose a valid announcement channel."}), content_type="application/json")
-        title = str(body.get("title", "")).strip()[:256]
-        message = str(body.get("message", "")).strip()[:4000]
-        if not title or not message:
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Add an announcement title and message."}), content_type="application/json")
-        if action == "send":
-            await channel.send(embed=await self.bot.themed_embed(guild.id, title, message))
-            return web.json_response({"ok": True})
-        item_id = max((int(item.get("id", 0)) for item in scheduled), default=0) + 1
-        minutes = max(1, min(int(body.get("minutes", 60) or 60), 43200))
-        send_at = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
-        scheduled.append({"id": item_id, "channel_id": channel.id, "title": title, "message": message, "send_at": send_at.isoformat(), "created_by": 0})
-        await self.bot.db.set_settings_value(guild.id, "scheduled_announcements", scheduled[-100:], self.bot.settings.default_prefix)
-        return web.json_response({"ok": True, "id": item_id})
-
-    async def engagement_temprole(self, request: web.Request) -> web.Response:
-        self.require_token(request)
-        guild = self.guild_or_404(request.match_info["guild_id"])
-        body = await request.json()
-        member = self.get_member_or_404(guild, body.get("member_id"))
-        role = self.get_role_or_404(guild, body.get("role_id"))
-        self.require_manageable_role(guild, role)
-        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
-        entries = settings.get("temporary_roles", [])
-        entries = [item for item in entries if not (int(item.get("member_id", 0)) == member.id and int(item.get("role_id", 0)) == role.id)]
-        if str(body.get("action", "give")) == "remove":
-            if role in member.roles:
-                await member.remove_roles(role, reason="Dashboard temporary role removal")
-        else:
-            minutes = max(1, min(int(body.get("minutes", 1440) or 1440), 43200))
-            expires_at = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
-            await member.add_roles(role, reason="Dashboard temporary role assignment")
-            entries.append({"member_id": member.id, "role_id": role.id, "expires_at": expires_at.isoformat(), "reason": "Dashboard"})
-        await self.bot.db.set_settings_value(guild.id, "temporary_roles", entries[-500:], self.bot.settings.default_prefix)
-        return web.json_response({"ok": True})
-
     async def member_role(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
@@ -2046,52 +1218,22 @@ class Dashboard:
 
 
 async def start_dashboard(bot: commands.Bot) -> None:
-    dashboard = Dashboard(bot)
     @web.middleware
-    async def dashboard_audit(request: web.Request, handler: Any) -> web.StreamResponse:
-        response = await handler(request)
-        guild_id = request.match_info.get("guild_id")
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and guild_id and str(guild_id).isdigit() and response.status < 400:
-            actor_id = dashboard._dashboard_session_user(request.cookies.get("ain_dashboard_session", "")) or 0
-            try:
-                await bot.db.execute(
-                    "INSERT INTO audit_events(guild_id,actor_id,target_id,event,data) VALUES(?,?,?,?,?)",
-                    int(guild_id),
-                    actor_id,
-                    0,
-                    "dashboard_change",
-                    json.dumps({"method": request.method, "path": request.path}),
-                )
-            except Exception:
-                bot.log.exception("Could not record dashboard audit event")
-        return response
+    async def json_errors(request: web.Request, handler: Any) -> web.StreamResponse:
+        try:
+            return await handler(request)
+        except web.HTTPException:
+            raise
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "One or more values were invalid."}), content_type="application/json")
+        except Exception:
+            bot.log.exception("Dashboard request failed: %s %s", request.method, request.path)
+            raise web.HTTPInternalServerError(text=json.dumps({"error": "The bot could not complete that request. Check the bot logs."}), content_type="application/json")
 
-    app = web.Application(middlewares=[dashboard_audit])
+    dashboard = Dashboard(bot)
+    app = web.Application(middlewares=[json_errors])
     app.router.add_get("/", dashboard.index)
-    app.router.add_get("/oauth/discord/start", dashboard.oauth_start)
-    app.router.add_get("/oauth/dashboard/start", dashboard.dashboard_oauth_start)
-    app.router.add_get("/oauth/discord/callback", dashboard.oauth_callback)
-    app.router.add_get("/shop", dashboard.shop)
-    app.router.add_get("/claim/free", dashboard.free_claim)
-    app.router.add_get("/checkout/start", dashboard.checkout_start)
-    app.router.add_get("/checkout/success", dashboard.checkout_success)
-    app.router.add_post("/webhooks/stripe", dashboard.stripe_webhook)
     app.router.add_get("/api/guilds", dashboard.guilds)
-    app.router.add_get("/api/updates", dashboard.updates_api)
-    app.router.add_get("/api/owner-ids", dashboard.owner_ids)
-    app.router.add_post("/api/owner-ids/add", dashboard.add_owner_id)
-    app.router.add_post("/api/owner-ids/remove", dashboard.remove_owner_id)
-    app.router.add_get("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_get)
-    app.router.add_post("/api/guild/{guild_id}/vc-offer", dashboard.vc_offer_save)
-    app.router.add_get("/api/guild/{guild_id}/payment-logs", dashboard.payment_logs)
-    app.router.add_get("/api/guild/{guild_id}/promos", dashboard.promos)
-    app.router.add_post("/api/guild/{guild_id}/promos", dashboard.promos)
-    app.router.add_get("/api/guild/{guild_id}/giveaway-config", dashboard.giveaway_config)
-    app.router.add_post("/api/guild/{guild_id}/giveaway-config", dashboard.giveaway_config)
-    app.router.add_post("/api/guild/{guild_id}/live-channels", dashboard.live_channels)
-    app.router.add_get("/api/member-transfer/status", dashboard.transfer_status)
-    app.router.add_post("/api/member-transfer/add", dashboard.transfer_members)
-    app.router.add_post("/api/member-transfer/invite", dashboard.create_transfer_invite)
     app.router.add_get("/api/guild/{guild_id}/summary", dashboard.summary)
     app.router.add_get("/api/guild/{guild_id}/commands", dashboard.commands)
     app.router.add_get("/api/guild/{guild_id}/search", dashboard.search)
@@ -2102,6 +1244,12 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_post("/api/guild/{guild_id}/voice/join", dashboard.join_voice)
     app.router.add_post("/api/guild/{guild_id}/voice/leave", dashboard.leave_voice)
     app.router.add_post("/api/guild/{guild_id}/voice/speak", dashboard.speak_voice)
+    app.router.add_post("/api/guild/{guild_id}/voice/stop", dashboard.stop_voice)
+    app.router.add_get("/api/guild/{guild_id}/voice/status", dashboard.voice_status)
+    app.router.add_post("/api/guild/{guild_id}/voice/preview", dashboard.preview_voice)
+    app.router.add_get("/api/guild/{guild_id}/panel", dashboard.panel_get)
+    app.router.add_post("/api/guild/{guild_id}/panel", dashboard.panel_save)
+    app.router.add_post("/api/guild/{guild_id}/panel/send", dashboard.panel_send)
     app.router.add_post("/api/guild/{guild_id}/message", dashboard.send_message)
     app.router.add_post("/api/guild/{guild_id}/embed", dashboard.send_embed)
     app.router.add_post("/api/guild/{guild_id}/music/{action}", dashboard.music_action)
@@ -2116,10 +1264,6 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_post("/api/guild/{guild_id}/role/rename", dashboard.rename_role)
     app.router.add_post("/api/guild/{guild_id}/role/move_top", dashboard.move_role_top)
     app.router.add_get("/api/guild/{guild_id}/logs", dashboard.logs)
-    app.router.add_get("/api/guild/{guild_id}/engagement", dashboard.engagement_status)
-    app.router.add_post("/api/guild/{guild_id}/engagement/sticky", dashboard.engagement_sticky)
-    app.router.add_post("/api/guild/{guild_id}/engagement/announcement", dashboard.engagement_announcement)
-    app.router.add_post("/api/guild/{guild_id}/engagement/temprole", dashboard.engagement_temprole)
     app.router.add_post("/api/guild/{guild_id}/member/role", dashboard.member_role)
     app.router.add_post("/api/guild/{guild_id}/member/timeout", dashboard.timeout_member)
     app.router.add_post("/api/guild/{guild_id}/member/untimeout", dashboard.untimeout_member)

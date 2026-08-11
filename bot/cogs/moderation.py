@@ -14,6 +14,7 @@ class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    mod = app_commands.Group(name="mod", description="Moderation commands")
 
     async def protected(self, guild_id: int, target: discord.Member, actor: discord.Member) -> bool:
         settings = await self.bot.db.get_settings(guild_id, self.bot.settings.default_prefix)
@@ -36,20 +37,6 @@ class Moderation(commands.Cog):
 
     async def save_foreverbans(self, guild_id: int, foreverbans: dict[str, dict[str, str | int]]) -> None:
         await self.bot.db.set_settings_value(guild_id, "foreverbans", foreverbans, self.bot.settings.default_prefix)
-
-    async def set_all_channel_locks(self, guild: discord.Guild, locked: bool, reason: str) -> tuple[int, int]:
-        changed = 0
-        skipped = 0
-        for channel in guild.text_channels:
-            if guild.me is None or not channel.permissions_for(guild.me).manage_channels:
-                skipped += 1
-                continue
-            try:
-                await channel.set_permissions(guild.default_role, send_messages=False if locked else None, reason=reason)
-                changed += 1
-            except (discord.Forbidden, discord.HTTPException):
-                skipped += 1
-        return changed, skipped
 
     @commands.hybrid_command(name="ban")
     @has_guild_permissions(ban_members=True)
@@ -213,35 +200,90 @@ class Moderation(commands.Cog):
 
     @commands.hybrid_command(name="lock")
     @has_guild_permissions(manage_channels=True)
-    @app_commands.describe(target="Use channel for this channel or all for every text channel")
-    @app_commands.choices(target=[
-        app_commands.Choice(name="This channel", value="channel"),
-        app_commands.Choice(name="All channels", value="all"),
-    ])
-    async def lock(self, ctx: commands.Context, target: str = "channel") -> None:
-        target = target.lower().strip()
-        if target in {"all", "server", "every"}:
-            changed, skipped = await self.set_all_channel_locks(ctx.guild, True, f"Lock all by {ctx.author}")
-            await ctx.reply(f"Locked `{changed}` text channels. Skipped `{skipped}` channels I could not manage.", mention_author=False)
-            return
-        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False, reason=f"Channel lock by {ctx.author}")
-        await ctx.reply("This channel is locked.", mention_author=False)
+    async def lock(self, ctx: commands.Context) -> None:
+        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
+        await ctx.reply("Channel locked.", mention_author=False)
 
     @commands.hybrid_command(name="unlock")
     @has_guild_permissions(manage_channels=True)
-    @app_commands.describe(target="Use channel for this channel or all for every text channel")
-    @app_commands.choices(target=[
-        app_commands.Choice(name="This channel", value="channel"),
-        app_commands.Choice(name="All channels", value="all"),
-    ])
-    async def unlock(self, ctx: commands.Context, target: str = "channel") -> None:
-        target = target.lower().strip()
-        if target in {"all", "server", "every"}:
-            changed, skipped = await self.set_all_channel_locks(ctx.guild, False, f"Unlock all by {ctx.author}")
-            await ctx.reply(f"Unlocked `{changed}` text channels. Skipped `{skipped}` channels I could not manage.", mention_author=False)
+    async def unlock(self, ctx: commands.Context) -> None:
+        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=None)
+        await ctx.reply("Channel unlocked.", mention_author=False)
+
+    @mod.command(name="ban", description="Ban a member")
+    @app_commands.default_permissions(ban_members=True)
+    async def slash_ban(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
+        if await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected.", ephemeral=True)
             return
-        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=None, reason=f"Channel unlock by {ctx.author}")
-        await ctx.reply("This channel is unlocked.", mention_author=False)
+        await member.ban(reason=reason)
+        await self.case(interaction.guild_id, member.id, interaction.user.id, "ban", reason)
+        await interaction.response.send_message(embed=embed("Banned", member.mention))
+
+    @mod.command(name="foreverban", description="Ban a user and keep them banned if unbanned or rejoining")
+    @app_commands.default_permissions(ban_members=True)
+    async def slash_foreverban(self, interaction: discord.Interaction, user: discord.User, reason: str = "Forever banned") -> None:
+        member = interaction.guild.get_member(user.id)
+        if member and await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected.", ephemeral=True)
+            return
+        foreverbans = await self.get_foreverbans(interaction.guild_id)
+        foreverbans[str(user.id)] = {"reason": reason, "moderator_id": interaction.user.id}
+        await self.save_foreverbans(interaction.guild_id, foreverbans)
+        await interaction.guild.ban(user, reason=f"Foreverban by {interaction.user}: {reason}", delete_message_days=0)
+        await self.case(interaction.guild_id, user.id, interaction.user.id, "foreverban", reason)
+        await interaction.response.send_message(embed=embed("Forever Banned", f"{user.mention} will be banned again if unbanned or if they rejoin."), ephemeral=True)
+
+    @mod.command(name="kick", description="Kick a member")
+    @app_commands.default_permissions(kick_members=True)
+    async def slash_kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
+        if await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected by God Mode.", ephemeral=True)
+            return
+        await member.kick(reason=reason)
+        await self.case(interaction.guild_id, member.id, interaction.user.id, "kick", reason)
+        await interaction.response.send_message(embed=embed("Kicked", member.mention))
+
+    @mod.command(name="purge", description="Delete recent messages")
+    @app_commands.default_permissions(manage_messages=True)
+    async def slash_purge(self, interaction: discord.Interaction, amount: app_commands.Range[int, 1, 1000]) -> None:
+        await interaction.response.defer(ephemeral=True)
+        deleted = await interaction.channel.purge(limit=amount, bulk=True)
+        await interaction.followup.send(f"Deleted {len(deleted)} messages.", ephemeral=True)
+
+    @mod.command(name="timeout", description="Timeout a member")
+    @app_commands.default_permissions(moderate_members=True)
+    async def slash_timeout(self, interaction: discord.Interaction, member: discord.Member, duration: str, reason: str = "No reason provided") -> None:
+        if await self.protected(interaction.guild_id, member, interaction.user):
+            await interaction.response.send_message("That member is protected by God Mode.", ephemeral=True)
+            return
+        until = discord.utils.utcnow() + parse_duration(duration)
+        await member.timeout(until, reason=reason)
+        await self.case(interaction.guild_id, member.id, interaction.user.id, "timeout", reason, until.isoformat())
+        await interaction.response.send_message(embed=embed("Timed Out", f"{member.mention} until {discord.utils.format_dt(until)}."))
+
+    @mod.command(name="untimeout", description="Remove a member timeout")
+    @app_commands.default_permissions(moderate_members=True)
+    async def slash_untimeout(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
+        await member.timeout(None, reason=reason)
+        await self.case(interaction.guild_id, member.id, interaction.user.id, "untimeout", reason)
+        await interaction.response.send_message(embed=embed("Timeout Removed", member.mention))
+
+    @mod.command(name="warn", description="Warn a member")
+    @app_commands.default_permissions(moderate_members=True)
+    async def slash_warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided") -> None:
+        warn_id = await self.bot.db.execute("INSERT INTO warnings(guild_id,user_id,moderator_id,reason) VALUES(?,?,?,?)", interaction.guild_id, member.id, interaction.user.id, reason)
+        await self.case(interaction.guild_id, member.id, interaction.user.id, "warn", reason)
+        await interaction.response.send_message(embed=embed("Warned", f"{member.mention} received warning `#{warn_id}`."))
+
+    @mod.command(name="warnings", description="Show warnings for a member")
+    @app_commands.default_permissions(moderate_members=True)
+    async def slash_warnings(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        rows = await self.bot.db.fetchall("SELECT id, moderator_id, reason, created_at FROM warnings WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 10", interaction.guild_id, member.id)
+        e = embed("Warning History", member.mention)
+        for row in rows:
+            e.add_field(name=f"#{row['id']} by {row['moderator_id']}", value=f"{row['reason']} | {row['created_at']}", inline=False)
+        await interaction.response.send_message(embed=e, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:

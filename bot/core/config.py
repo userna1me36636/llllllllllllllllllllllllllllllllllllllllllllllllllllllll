@@ -44,10 +44,6 @@ class Settings:
     dashboard_enabled: bool
     dashboard_token: str | None
     dashboard_port: int
-    discord_client_id: str | None
-    discord_client_secret: str | None
-    discord_oauth_redirect_uri: str | None
-    oauth_state_secret: str | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,8 +72,4 @@ class Settings:
             dashboard_enabled=_bool(os.getenv("DASHBOARD_ENABLED"), True),
             dashboard_token=os.getenv("DASHBOARD_TOKEN") or None,
             dashboard_port=int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080"))),
-            discord_client_id=os.getenv("DISCORD_CLIENT_ID") or None,
-            discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET") or None,
-            discord_oauth_redirect_uri=os.getenv("DISCORD_OAUTH_REDIRECT_URI") or None,
-            oauth_state_secret=os.getenv("OAUTH_STATE_SECRET") or None,
         )

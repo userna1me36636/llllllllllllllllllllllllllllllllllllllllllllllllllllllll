@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import hmac
-import os
 import time
-import urllib.parse
 from collections import defaultdict, deque
 from typing import Any
 
@@ -405,13 +401,9 @@ class GrowthSafety(commands.Cog):
     async def stats_setup(self, interaction: discord.Interaction, category: discord.CategoryChannel | None = None) -> None:
         await interaction.response.defer(ephemeral=True)
         category = category or await interaction.guild.create_category("Server Stats", reason="Stats setup")
-        try:
-            await category.edit(position=0, reason="Keep live stats near the top")
-        except discord.HTTPException:
-            pass
         existing = {channel.name.split(":")[0].lower(): channel for channel in category.voice_channels}
         ids = {}
-        for key in ("Members", "In VC", "Top Balance", "MVP Winner", "Giveaway Winner"):
+        for key in ("Members", "Boosts", "Roles"):
             channel = existing.get(key.lower())
             if channel is None:
                 channel = await interaction.guild.create_voice_channel(f"{key}: 0", category=category, reason="Stats setup")
@@ -421,86 +413,22 @@ class GrowthSafety(commands.Cog):
         await self.update_stats(interaction.guild)
         await interaction.followup.send(embed=await self.themed(interaction.guild_id, "Stats Channels Ready"), ephemeral=True)
 
-    @store.command(name="link", description="Get your private link to this server's payment shop")
-    async def store_link(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
-        try:
-            railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
-            configured_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-            if "your-railway-domain" in configured_url.lower():
-                configured_url = ""
-            parsed_configured = urllib.parse.urlparse(configured_url)
-            if parsed_configured.scheme not in {"https", "http"} or not parsed_configured.netloc:
-                configured_url = ""
-            public_url = configured_url or (f"https://{railway_domain}" if railway_domain else "")
-            parsed = urllib.parse.urlparse(public_url)
-            if parsed.scheme not in {"https", "http"} or not parsed.netloc:
-                await interaction.followup.send("No valid public Railway domain was found. Generate one under Railway Settings → Networking.", ephemeral=True)
-                return
-            secret = getattr(self.bot.settings, "oauth_state_secret", None) or getattr(self.bot.settings, "dashboard_token", None)
-            if not secret:
-                await interaction.followup.send("Set OAUTH_STATE_SECRET or DASHBOARD_TOKEN in Railway, then redeploy.", ephemeral=True)
-                return
-            payload = f"{interaction.guild_id}:{interaction.user.id}"
-            signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            url = f"{public_url}/shop?" + urllib.parse.urlencode({"guild_id": str(interaction.guild_id), "user_id": str(interaction.user.id), "signature": signature})
-            view = discord.ui.View(timeout=300)
-            view.add_item(discord.ui.Button(label="Open Payment Store", url=url))
-            e = await self.themed(interaction.guild_id, "Payment Store", "Use the button below to view this server's available packages. This link is private to your Discord account.")
-            await interaction.followup.send(embed=e, view=view, ephemeral=True)
-        except Exception as error:
-            self.bot.log.exception("/store link failed")
-            await interaction.followup.send(f"Store link failed: `{type(error).__name__}`. Check Railway logs for the details.", ephemeral=True)
-
     async def update_stats(self, guild: discord.Guild) -> None:
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
         ids = settings.get("stats_channels", {})
-        voice_count = sum(1 for member in guild.members if member.voice and member.voice.channel)
-        top = await self.bot.db.fetchrow("SELECT user_id,wallet+bank AS total FROM economy WHERE guild_id=? ORDER BY total DESC LIMIT 1", guild.id)
-        top_member = guild.get_member(int(top["user_id"])) if top else None
-        mvp_id = int(settings.get("mvp_winner_id", 0) or 0)
-        giveaway = settings.get("last_giveaway_winner", {})
-        giveaway_id = int(giveaway.get("user_id", 0) or 0)
-        values = {
-            "members": str(len(guild.members)),
-            "in vc": str(voice_count),
-            "top balance": f"{top_member.display_name} - {top['total']}" if top_member and top else "None",
-            "mvp winner": guild.get_member(mvp_id).display_name if guild.get_member(mvp_id) else "None",
-            "giveaway winner": guild.get_member(giveaway_id).display_name if guild.get_member(giveaway_id) else "None",
-        }
+        values = {"members": len(guild.members), "boosts": guild.premium_subscription_count or 0, "roles": len(guild.roles)}
         for key, value in values.items():
             channel = guild.get_channel(int(ids.get(key, 0) or 0))
-            new_name = f"{key.title()}: {value}"[:100]
-            if isinstance(channel, discord.VoiceChannel) and channel.name != new_name:
+            if isinstance(channel, discord.VoiceChannel) and channel.name != f"{key.title()}: {value}":
                 try:
-                    await channel.edit(name=new_name)
+                    await channel.edit(name=f"{key.title()}: {value}")
                 except discord.HTTPException:
                     pass
-
-    @stats.command(name="mvp", description="Set the member shown in the MVP winner channel")
-    @app_admin()
-    async def stats_mvp(self, interaction: discord.Interaction, member: discord.Member) -> None:
-        await self.bot.db.set_settings_value(interaction.guild_id, "mvp_winner_id", member.id, self.bot.settings.default_prefix)
-        await self.update_stats(interaction.guild)
-        await interaction.response.send_message(f"MVP winner set to {member.mention}.", ephemeral=True)
 
     @tasks.loop(minutes=10)
     async def stats_updater(self) -> None:
         for guild in self.bot.guilds:
             await self.update_stats(guild)
-
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member) -> None:
-        await self.update_stats(member.guild)
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member) -> None:
-        await self.update_stats(member.guild)
-
-    @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
-        if before.channel != after.channel:
-            await self.update_stats(member.guild)
 
     @stats_updater.before_loop
     async def before_stats_updater(self) -> None:

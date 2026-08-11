@@ -65,28 +65,6 @@ class Giveaways(commands.Cog):
         await self.bot.db.execute("UPDATE giveaways SET ends_at=? WHERE message_id=? AND ended=0", time.time(), int(message_id))
         await interaction.response.send_message("Giveaway ending now.", ephemeral=True)
 
-    @giveaway.command(name="random", description="Pick a random member and a configured surprise prize")
-    @app_admin()
-    async def random_prize(self, interaction: discord.Interaction) -> None:
-        settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
-        outcomes = settings.get("random_giveaway_outcomes") or [
-            {"name": "10% off", "weight": 35}, {"name": "15% off", "weight": 25},
-            {"name": "25% off", "weight": 15}, {"name": "$15 credit", "weight": 15},
-            {"name": "Nitro", "weight": 10},
-        ]
-        valid = [row for row in outcomes if str(row.get("name", "")).strip() and int(row.get("weight", 0) or 0) > 0]
-        members = [member for member in interaction.guild.members if not member.bot]
-        if not valid or not members:
-            await interaction.response.send_message("Add giveaway outcomes in the dashboard first.", ephemeral=True)
-            return
-        winner = random.choice(members)
-        prize = random.choices(valid, weights=[int(row["weight"]) for row in valid], k=1)[0]["name"]
-        await self.bot.db.set_settings_value(interaction.guild_id, "last_giveaway_winner", {"user_id": winner.id, "prize": prize}, self.bot.settings.default_prefix)
-        growth = self.bot.get_cog("GrowthSafety")
-        if growth:
-            await growth.update_stats(interaction.guild)
-        await interaction.response.send_message(embed=embed("Random Giveaway Winner", f"{winner.mention} won **{prize}**."))
-
     @tasks.loop(seconds=30)
     async def check_giveaways(self) -> None:
         rows = await self.bot.db.fetchall("SELECT * FROM giveaways WHERE ended=0 AND ends_at<=?", time.time())

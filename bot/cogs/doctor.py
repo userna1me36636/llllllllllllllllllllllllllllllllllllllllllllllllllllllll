@@ -33,10 +33,6 @@ class Doctor(commands.Cog):
         state = "OK" if ok else "FIX"
         return f"`{state}` **{label}**" + (f"\n{fix}" if fix and not ok else "")
 
-    @staticmethod
-    def optional_line(configured: bool, label: str, note: str) -> str:
-        return f"`{'OK' if configured else 'OPTIONAL'}` **{label}**\n{note}"
-
     def env_ok(self, name: str) -> bool:
         value = os.getenv(name, "").strip()
         return bool(value and not value.startswith("put-your") and value != "your-webhook-url-here")
@@ -51,9 +47,6 @@ class Doctor(commands.Cog):
         prefix = settings.get("prefix", self.bot.settings.default_prefix)
         ffmpeg_path = os.getenv("FFMPEG_PATH", "").strip() or shutil.which("ffmpeg")
         opus_path = os.getenv("OPUS_PATH", "").strip()
-        cookies_configured = self.env_ok("YTDLP_COOKIES_BASE64") or self.env_ok("YTDLP_COOKIES_TEXT") or self.env_ok("YTDLP_COOKIES_FILE")
-        spotify_id = self.env_ok("SPOTIFY_CLIENT_ID")
-        spotify_secret = self.env_ok("SPOTIFY_CLIENT_SECRET")
         owner_ids = getattr(self.bot.settings, "owner_ids", set())
         tree_count = len(self.bot.tree.get_commands())
 
@@ -102,10 +95,10 @@ class Doctor(commands.Cog):
             value="\n".join(
                 [
                     self.line(bool(getattr(self.bot.settings, "enable_music", True)), "Music enabled", "Set `ENABLE_MUSIC=true`."),
-                    self.line(bool(ffmpeg_path), f"FFmpeg ready{f': `{ffmpeg_path}`' if ffmpeg_path else ''}", "Install `ffmpeg` through `nixpacks.toml`, or set `FFMPEG_PATH`."),
-                    self.line(discord.opus.is_loaded() or bool(opus_path), "Opus ready", "Install `libopus`, or set `OPUS_PATH`."),
-                    self.optional_line(cookies_configured, "YouTube cookies", "Configured." if cookies_configured else "Not set. Only needed if YouTube blocks playback."),
-                    (self.line(False, "Spotify credentials incomplete", "Set both Spotify values, or leave both blank.") if spotify_id != spotify_secret else self.optional_line(spotify_id and spotify_secret, "Spotify search", "Configured." if spotify_id and spotify_secret else "Not set. Regular music playback still works.")),
+                    self.line(bool(ffmpeg_path), "FFmpeg found", "Railway needs `ffmpeg` in `nixpacks.toml`, or set `FFMPEG_PATH`."),
+                    self.line(discord.opus.is_loaded() or bool(opus_path), "Opus configured", "Railway needs `libopus`, or set `OPUS_PATH`."),
+                    self.line(self.env_ok("YTDLP_COOKIES_TEXT") or self.env_ok("YTDLP_COOKIES_FILE"), "YouTube cookies optional", "Only needed when YouTube blocks a track."),
+                    self.line(self.env_ok("SPOTIFY_CLIENT_ID") == self.env_ok("SPOTIFY_CLIENT_SECRET"), "Spotify keys match", "Add both Spotify values, or leave both blank."),
                 ]
             )[:1024],
             inline=False,

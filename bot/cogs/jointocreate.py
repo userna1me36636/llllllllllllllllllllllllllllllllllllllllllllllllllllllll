@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from bot.core.checks import app_admin
-from bot.core.utils import DEFAULT_COLOR, embed, theme_color_from_data
+from bot.core.utils import DEFAULT_COLOR, embed, pulse_line, style_embed, theme_color_from_data
 
 
 class JtcRenameModal(discord.ui.Modal):
@@ -50,18 +50,33 @@ class JtcControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.channel_id = channel_id
+        glass_labels = {
+            "Claim": "Glass Claim",
+            "Boost Bitrate": "Glass Bitrate",
+            "Boost Privacy": "Glass Privacy",
+            "Play Music": "Glass Music",
+            "Purple Pulse": "Glass Pulse",
+        }
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                if item.label in glass_labels:
+                    item.label = glass_labels[item.label]
+                if item.style in {discord.ButtonStyle.primary, discord.ButtonStyle.success}:
+                    item.style = discord.ButtonStyle.secondary
+                if item.label in {"Glass Claim", "Unlock", "Glass Bitrate", "Glass Privacy", "Glass Music", "Glass Pulse"}:
+                    item.emoji = None
 
     async def channel(self, interaction: discord.Interaction) -> discord.VoiceChannel | None:
         if interaction.guild is None:
             await interaction.response.send_message("Use this in a server.", ephemeral=True)
             return None
-        channel = interaction.channel if isinstance(interaction.channel, discord.VoiceChannel) else interaction.guild.get_channel(self.channel_id)
+        channel = interaction.guild.get_channel(self.channel_id)
         if not isinstance(channel, discord.VoiceChannel):
             await interaction.response.send_message("That temp voice channel is gone.", ephemeral=True)
             return None
         return channel
 
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.secondary, custom_id="jtc:claim")
+    @discord.ui.button(label="Claim", emoji="👑", style=discord.ButtonStyle.primary)
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -74,7 +89,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(interaction.user, manage_channels=True, connect=True, view_channel=True)
         await interaction.response.send_message(f"{interaction.user.mention} now owns this VC.", ephemeral=True)
 
-    @discord.ui.button(label="Rename", style=discord.ButtonStyle.secondary, custom_id="jtc:rename")
+    @discord.ui.button(label="Rename", emoji="✏️", style=discord.ButtonStyle.secondary)
     async def rename(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -84,7 +99,7 @@ class JtcControlView(discord.ui.View):
             return
         await interaction.response.send_modal(JtcRenameModal(self.cog, channel))
 
-    @discord.ui.button(label="Limit", style=discord.ButtonStyle.secondary, custom_id="jtc:limit")
+    @discord.ui.button(label="Limit", emoji="👥", style=discord.ButtonStyle.secondary)
     async def limit(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
@@ -94,7 +109,7 @@ class JtcControlView(discord.ui.View):
             return
         await interaction.response.send_modal(JtcLimitModal(self.cog, channel))
 
-    @discord.ui.button(label="Lock", style=discord.ButtonStyle.secondary, custom_id="jtc:lock")
+    @discord.ui.button(label="Lock", emoji="🔒", style=discord.ButtonStyle.danger)
     async def lock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -102,7 +117,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=False)
         await interaction.response.send_message("Voice channel locked.", ephemeral=True)
 
-    @discord.ui.button(label="Unlock", style=discord.ButtonStyle.secondary, custom_id="jtc:unlock")
+    @discord.ui.button(label="Unlock", emoji="🔓", style=discord.ButtonStyle.success)
     async def unlock(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -110,7 +125,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=None)
         await interaction.response.send_message("Voice channel unlocked.", ephemeral=True)
 
-    @discord.ui.button(label="Hide", style=discord.ButtonStyle.secondary, custom_id="jtc:hide")
+    @discord.ui.button(label="Hide", emoji="🙈", style=discord.ButtonStyle.secondary)
     async def hide(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -118,7 +133,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, view_channel=False)
         await interaction.response.send_message("Voice channel hidden.", ephemeral=True)
 
-    @discord.ui.button(label="Reveal", style=discord.ButtonStyle.secondary, custom_id="jtc:reveal")
+    @discord.ui.button(label="Reveal", emoji="👁️", style=discord.ButtonStyle.secondary)
     async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_control(interaction, channel):
@@ -126,7 +141,7 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, view_channel=None)
         await interaction.response.send_message("Voice channel revealed.", ephemeral=True)
 
-    @discord.ui.button(label="Boost Bitrate", style=discord.ButtonStyle.secondary, custom_id="jtc:boost_bitrate")
+    @discord.ui.button(label="Boost Bitrate", style=discord.ButtonStyle.primary)
     async def boost_bitrate(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
@@ -135,7 +150,7 @@ class JtcControlView(discord.ui.View):
         await channel.edit(bitrate=int(bitrate), reason=f"Booster VC bitrate by {interaction.user}")
         await interaction.response.send_message("Booster bitrate applied to this VC.", ephemeral=True)
 
-    @discord.ui.button(label="Boost Privacy", style=discord.ButtonStyle.secondary, custom_id="jtc:boost_privacy")
+    @discord.ui.button(label="Boost Privacy", style=discord.ButtonStyle.primary)
     async def boost_privacy(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None or not await self.cog.can_use_booster_perk(interaction, channel):
@@ -143,24 +158,28 @@ class JtcControlView(discord.ui.View):
         await channel.set_permissions(channel.guild.default_role, connect=False, view_channel=True)
         await interaction.response.send_message("Booster privacy turned on. Use Unlock when you want to open it again.", ephemeral=True)
 
-    @discord.ui.button(label="Play Music", style=discord.ButtonStyle.secondary, custom_id="jtc:play_music")
+    @discord.ui.button(label="Play Music", style=discord.ButtonStyle.success)
     async def play_music(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         channel = await self.channel(interaction)
         if channel is None:
             return
         await self.cog.start_music_panel(interaction, channel)
 
+    @discord.ui.button(label="Purple Pulse", style=discord.ButtonStyle.primary)
+    async def purple_pulse(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        channel = await self.channel(interaction)
+        if channel is None:
+            return
+        await interaction.response.send_message(embed=self.cog.pulse_embed(channel.guild), ephemeral=True)
+
+
 class JoinToCreate(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.owners: dict[int, int] = {}
-        self.creating_for: set[int] = set()
         self.theme_colors: dict[int, int] = {}
         self.theme_options: dict[int, dict] = {}
         self.cleanup_empty_jtc_channels.start()
-
-    async def cog_load(self) -> None:
-        self.bot.add_view(JtcControlView(self, 0))
 
     def cog_unload(self) -> None:
         self.cleanup_empty_jtc_channels.cancel()
@@ -220,11 +239,22 @@ class JoinToCreate(commands.Cog):
         return discord.Color(int(cached)) if cached else DEFAULT_COLOR
 
     def control_embed(self, channel: discord.VoiceChannel, owner: discord.Member) -> discord.Embed:
-        e = discord.Embed(title="Voice Channel Controls", description=f"Owner: {owner.mention}\nChannel: {channel.mention}")
-        e.add_field(name="Channel", value="Claim · Rename · Limit · Lock · Unlock · Hide · Reveal", inline=False)
-        e.add_field(name="Extras", value="Boost Bitrate · Boost Privacy · Play Music", inline=False)
-        e.set_footer(text="Only the VC owner or server moderators can use these controls.")
-        return e
+        theme = self.theme_options.get(channel.guild.id, {})
+        e = embed("Voice Glass Panel", f"{pulse_line()}\n\nOwner: {owner.mention}\nUse the frosted controls below to control {channel.mention}.", self.theme_color(channel.guild))
+        e.add_field(name="Quick Controls", value="Claim, rename, set user limit, lock, unlock, hide, or reveal this temporary VC.", inline=False)
+        e.add_field(name="Booster Perks", value="Boost Bitrate and Boost Privacy are booster-only VC tools. Mods can use them too.", inline=False)
+        e.add_field(name="Music", value="Press Play Music to bring the bot into this VC and open the music panel.", inline=False)
+        e.add_field(name="Style", value="Glass Pulse refreshes the red glass frame for this VC.", inline=False)
+        if theme.get("effects", True):
+            e.add_field(name="Live Detail", value="Barely translucent red background feel, white outline wording, and a glass-frame banner slot from `/theme banner`.", inline=False)
+        e.set_footer(text="AinBot JTC | red glass interface")
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
+
+    def pulse_embed(self, guild: discord.Guild | None) -> discord.Embed:
+        theme = self.theme_options.get(guild.id, {}) if guild else {}
+        e = embed("Glass Pulse", pulse_line(), self.theme_color(guild))
+        e.add_field(name="VC Interface", value="This temp VC panel is using the red glass server theme.", inline=False)
+        return style_embed(e, banner_url=theme.get("banner_url"), flashy=theme.get("effects", True))
 
     async def start_music_panel(self, interaction: discord.Interaction, channel: discord.VoiceChannel) -> None:
         if not isinstance(interaction.user, discord.Member):
@@ -297,8 +327,8 @@ class JoinToCreate(commands.Cog):
         try:
             await self.load_theme(channel.guild)
             await channel.send(content=owner.mention, embed=self.control_embed(channel, owner), view=JtcControlView(self, channel.id))
-        except discord.HTTPException as exc:
-            self.bot.log.warning("Could not post JTC controls in %s (%s): %s", channel.name, channel.id, exc)
+        except discord.HTTPException:
+            pass
 
     @tasks.loop(seconds=45)
     async def cleanup_empty_jtc_channels(self) -> None:
@@ -313,14 +343,11 @@ class JoinToCreate(commands.Cog):
                     self.owners.pop(int(channel_id), None)
                     changed = True
                     continue
-                if isinstance(channel, discord.VoiceChannel) and not any(not member.bot for member in channel.members):
+                if isinstance(channel, discord.VoiceChannel) and not channel.members:
                     temp_channels.pop(channel_id, None)
                     self.owners.pop(channel.id, None)
                     changed = True
-                    try:
-                        await channel.delete(reason="Empty join-to-create channel")
-                    except discord.HTTPException as exc:
-                        self.bot.log.warning("Could not delete empty JTC channel %s: %s", channel.id, exc)
+                    await channel.delete(reason="Empty join-to-create channel")
             if changed:
                 await self.bot.db.set_settings_value(guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
 
@@ -338,11 +365,6 @@ class JoinToCreate(commands.Cog):
         user_limit: int = 0,
         output_category: discord.CategoryChannel | None = None,
     ) -> None:
-        me = interaction.guild.me
-        if me is None or not me.guild_permissions.manage_channels or not me.guild_permissions.move_members:
-            await interaction.response.send_message("JTC needs **Manage Channels** and **Move Members** before setup can work.", ephemeral=True)
-            return
-        user_limit = max(0, min(99, int(user_limit)))
         settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
         templates = settings.get("jtc_templates", {})
         templates[str(channel.id)] = {
@@ -400,11 +422,6 @@ class JoinToCreate(commands.Cog):
             return
         channel = member.voice.channel
         if channel.id not in self.owners:
-            settings = await self.bot.db.get_settings(interaction.guild_id, self.bot.settings.default_prefix)
-            saved = settings.get("jtc_temp_channels", {}).get(str(channel.id), {})
-            if saved.get("owner_id"):
-                self.owners[channel.id] = int(saved["owner_id"])
-        if channel.id not in self.owners:
             await interaction.response.send_message("This is not a managed temporary channel.", ephemeral=True)
             return
         self.owners[channel.id] = member.id
@@ -425,55 +442,28 @@ class JoinToCreate(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
-        if member.bot:
-            return
         await self.warn_bad_vc_mute(member, before, after)
         if after.channel:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             template = settings.get("jtc_templates", {}).get(str(after.channel.id))
-            if template and member.id not in self.creating_for:
-                me = member.guild.me
-                if me is None or not me.guild_permissions.manage_channels or not me.guild_permissions.move_members:
-                    try:
-                        await member.send(f"JTC could not create your room in **{member.guild.name}**. The bot needs Manage Channels and Move Members.")
-                    except discord.HTTPException:
-                        pass
-                    self.bot.log.warning("JTC blocked in guild %s: missing Manage Channels or Move Members", member.guild.id)
-                    return
-                self.creating_for.add(member.id)
+            if template:
                 category = member.guild.get_channel(template.get("category_id") or 0)
                 if not isinstance(category, discord.CategoryChannel):
                     category = after.channel.category
-                channel = None
-                try:
-                    room_name = str(template.get("name", "{user}'s room")).replace("{user}", member.display_name)[:90]
-                    channel = await member.guild.create_voice_channel(
-                        room_name or f"{member.display_name}'s room",
-                        category=category,
-                        user_limit=max(0, min(99, int(template.get("user_limit", 0)))),
-                        reason="Join-to-create",
-                    )
-                    await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
-                    await member.move_to(channel, reason="Join-to-create")
-                    self.owners[channel.id] = member.id
-                    temp_channels = settings.get("jtc_temp_channels", {})
-                    temp_channels[str(channel.id)] = {"owner_id": member.id, "lobby_id": after.channel.id}
-                    await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
-                    await self.send_control_panel(channel, member)
-                except (discord.Forbidden, discord.HTTPException, ValueError) as exc:
-                    self.bot.log.exception("JTC creation failed in guild %s: %s", member.guild.id, exc)
-                    if channel is not None:
-                        try:
-                            await channel.delete(reason="JTC creation failed")
-                        except discord.HTTPException:
-                            pass
-                    try:
-                        await member.send(f"JTC could not create your room in **{member.guild.name}**. Ask an admin to run `/doctor` and `/checkperms`.")
-                    except discord.HTTPException:
-                        pass
-                finally:
-                    self.creating_for.discard(member.id)
-        if before.channel and not any(not voice_member.bot for voice_member in before.channel.members):
+                channel = await member.guild.create_voice_channel(
+                    template.get("name", "{user}'s room").format(user=member.display_name)[:90],
+                    category=category,
+                    user_limit=int(template.get("user_limit", 0)),
+                    reason="Join-to-create",
+                )
+                self.owners[channel.id] = member.id
+                temp_channels = settings.get("jtc_temp_channels", {})
+                temp_channels[str(channel.id)] = {"owner_id": member.id, "lobby_id": after.channel.id}
+                await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
+                await channel.set_permissions(member, manage_channels=True, connect=True, view_channel=True)
+                await member.move_to(channel)
+                await self.send_control_panel(channel, member)
+        if before.channel and not before.channel.members:
             settings = await self.bot.db.get_settings(member.guild.id, self.bot.settings.default_prefix)
             temp_channels = settings.get("jtc_temp_channels", {})
             is_temp_channel = before.channel.id in self.owners or str(before.channel.id) in temp_channels
@@ -482,10 +472,7 @@ class JoinToCreate(commands.Cog):
             self.owners.pop(before.channel.id, None)
             temp_channels.pop(str(before.channel.id), None)
             await self.bot.db.set_settings_value(member.guild.id, "jtc_temp_channels", temp_channels, self.bot.settings.default_prefix)
-            try:
-                await before.channel.delete(reason="Empty join-to-create channel")
-            except discord.HTTPException as exc:
-                self.bot.log.warning("Could not delete empty JTC channel %s: %s", before.channel.id, exc)
+            await before.channel.delete(reason="Empty join-to-create channel")
 
 
 async def setup(bot: commands.Bot) -> None:

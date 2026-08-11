@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 from collections.abc import Iterable
 
 import discord
@@ -23,8 +22,6 @@ COGS: tuple[str, ...] = (
     "bot.cogs.setup_tools",
     "bot.cogs.growth_safety",
     "bot.cogs.community_suite",
-    "bot.cogs.engagement",
-    "bot.cogs.reliability",
     "bot.cogs.management_suite",
     "bot.cogs.moderation",
     "bot.cogs.automod",
@@ -195,20 +192,18 @@ class AllInOneBot(commands.Bot):
         if isinstance(error, commands.BadArgument):
             await self.safe_context_reply(ctx, "Bad Input", str(error))
             return
-        error_id = secrets.token_hex(3).upper()
-        self.log.exception("Command error %s in %s", error_id, ctx.command, exc_info=error)
+        self.log.exception("Command error in %s", ctx.command, exc_info=error)
         if ctx.guild is not None and ctx.command is not None:
             await self.log_command_usage(ctx.guild.id, ctx.author.id, ctx.channel.id, ctx.command.qualified_name, "error")
-        await self.safe_context_reply(ctx, "Command Error", f"Error ID: `{error_id}`")
+        await self.safe_context_reply(ctx, "Command Error")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         error = getattr(error, "original", error)
         if isinstance(error, app_commands.MissingPermissions):
             embed = await self.themed_embed(interaction.guild_id, "Missing Permission")
         else:
-            error_id = secrets.token_hex(3).upper()
-            self.log.exception("Slash command error %s in %s", error_id, getattr(interaction.command, "qualified_name", "unknown"), exc_info=error)
-            embed = await self.themed_embed(interaction.guild_id, "Command Error", f"Error ID: `{error_id}`")
+            self.log.exception("Slash command error in %s", getattr(interaction.command, "qualified_name", "unknown"), exc_info=error)
+            embed = await self.themed_embed(interaction.guild_id, "Command Error")
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(embed=embed, ephemeral=True)
