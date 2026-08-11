@@ -31,10 +31,12 @@ class GiveawayView(discord.ui.View):
 class Giveaways(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self.number_giveaways: dict[int, dict[str, int | str]] = {}
         bot.add_view(GiveawayView())
         self.check_giveaways.start()
 
     giveaway = app_commands.Group(name="giveaway", description="Timed giveaways")
+    number = app_commands.Group(name="number", description="Number guessing giveaways")
 
     def cog_unload(self) -> None:
         self.check_giveaways.cancel()
@@ -64,6 +66,70 @@ class Giveaways(commands.Cog):
     async def end(self, interaction: discord.Interaction, message_id: str) -> None:
         await self.bot.db.execute("UPDATE giveaways SET ends_at=? WHERE message_id=? AND ended=0", time.time(), int(message_id))
         await interaction.response.send_message("Giveaway ending now.", ephemeral=True)
+
+    @number.command(name="gw", description="Start a first-to-guess-the-number giveaway")
+    @app_admin()
+    async def number_gw(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        number: app_commands.Range[int, 1, 100],
+        prize: str = "Number Giveaway",
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("This command only works in a server.", ephemeral=True)
+            return
+        if interaction.guild.id in self.number_giveaways:
+            active = self.number_giveaways[interaction.guild.id]
+            await interaction.response.send_message(
+                f"A number giveaway is already active in <#{active['channel_id']}>.",
+                ephemeral=True,
+            )
+            return
+        permissions = channel.permissions_for(interaction.guild.me)
+        if not (permissions.view_channel and permissions.send_messages and permissions.read_message_history):
+            await interaction.response.send_message(
+                "I need View Channel, Send Messages, and Read Message History permissions in that channel.",
+                ephemeral=True,
+            )
+            return
+        self.number_giveaways[interaction.guild.id] = {
+            "channel_id": channel.id,
+            "number": int(number),
+            "host_id": interaction.user.id,
+            "prize": prize[:200],
+        }
+        await channel.send(
+            embed=embed(
+                "Number Giveaway",
+                f"**Prize:** {prize[:200]}\nGuess a number from **1–100**!\n"
+                "The first person to type the correct number wins.",
+            )
+        )
+        await interaction.response.send_message(
+            f"Number giveaway started in {channel.mention}. The winning number is **{number}**.",
+            ephemeral=True,
+        )
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if message.guild is None or message.author.bot:
+            return
+        active = self.number_giveaways.get(message.guild.id)
+        if active is None or message.channel.id != active["channel_id"]:
+            return
+        guess = message.content.strip()
+        if not guess.isdecimal() or int(guess) != active["number"]:
+            return
+        # Remove it before sending so two nearly simultaneous correct guesses cannot both win.
+        self.number_giveaways.pop(message.guild.id, None)
+        await message.channel.send(
+            embed=embed(
+                "Number Giveaway Winner!",
+                f"Congratulations {message.author.mention}!\n"
+                f"You guessed **{active['number']}** first and won **{active['prize']}**.",
+            )
+        )
 
     @tasks.loop(seconds=30)
     async def check_giveaways(self) -> None:
