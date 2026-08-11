@@ -11,7 +11,10 @@ import datetime as dt
 from pathlib import Path
 
 import discord
-import edge_tts
+try:
+    import edge_tts
+except ImportError:  # Keep the whole bot online when an optional TTS install is missing.
+    edge_tts = None
 from aiohttp import ClientSession, web
 from discord.ext import commands
 
@@ -306,6 +309,7 @@ async function loadSummary(){
   $('shopRole').innerHTML = `<option value="0">No role reward</option>` + data.role_list.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   $('ttsText').maxLength = data.tts_max_length;
   $('ttsCount').parentElement.lastChild.textContent = '/' + data.tts_max_length;
+  if(!data.tts_available) setTtsStatus('TTS package missing on the host. Reinstall requirements.txt and redeploy.');
   refreshVoiceStatus();
 }
 function panelPayload(){
@@ -406,6 +410,14 @@ class Dashboard:
         if not allowed:
             raise web.HTTPForbidden(text=json.dumps({"error": "Only the server owner or an approved TTS user/role can use this control."}), content_type="application/json")
         return member
+
+    @staticmethod
+    def require_tts_backend() -> None:
+        if edge_tts is None:
+            raise web.HTTPServiceUnavailable(
+                text=json.dumps({"error": "Text to Speech is unavailable because edge-tts is not installed. Redeploy after installing requirements.txt."}),
+                content_type="application/json",
+            )
 
     def require_panel_controller(self, guild: discord.Guild, body: dict[str, Any]) -> discord.Member:
         actor_id = int(body.get("actor_id", 0) or 0)
@@ -551,6 +563,7 @@ class Dashboard:
             "members_list": [{"id": str(member.id), "name": member.display_name} for member in members],
             "role_list": [{"id": str(role.id), "name": role.name} for role in roles[:250]],
             "tts_max_length": max(50, min(int(os.getenv("TTS_MAX_LENGTH", "500")), 900)),
+            "tts_available": edge_tts is not None,
         }
         payload.update(self.command_counts())
         return web.json_response(payload)
@@ -720,6 +733,7 @@ class Dashboard:
     }
 
     async def make_tts_file(self, text: str, voice: str, volume: int, speed: int, pitch: int) -> Path:
+        self.require_tts_backend()
         voice_name, style_pitch = self.TTS_VOICES.get(voice, self.TTS_VOICES["female"])
         path = Path(tempfile.gettempdir()) / f"ainbot-tts-{os.getpid()}-{time.time_ns()}.mp3"
         communicate = edge_tts.Communicate(
@@ -791,6 +805,7 @@ class Dashboard:
 
     async def speak_voice(self, request: web.Request) -> web.Response:
         self.require_token(request)
+        self.require_tts_backend()
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
         actor = self.require_tts_controller(guild, body)
@@ -848,6 +863,7 @@ class Dashboard:
 
     async def preview_voice(self, request: web.Request) -> web.Response:
         self.require_token(request)
+        self.require_tts_backend()
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
         self.require_tts_controller(guild, body)
