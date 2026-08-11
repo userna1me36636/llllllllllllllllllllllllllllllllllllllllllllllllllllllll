@@ -251,6 +251,8 @@ def dashboard_html() -> str:
         <h2>Discord Panel Designer</h2><p>Build the full command panel layout each server sees—not just its color.</p>
         <label>Your Discord user ID</label><input id="panelActorId" inputmode="numeric" placeholder="Server owner or approved role">
         <label>Text channel</label><select id="panelChannel"></select>
+        <label>Saved interfaces</label><div class="row"><select id="panelProfiles" onchange="selectPanelProfile()"><option value="">New interface</option></select><button onclick="newPanelDesign()">New</button><button class="danger" onclick="deletePanelDesign()">Delete</button></div>
+        <label>Interface name</label><input id="panelName" maxlength="40" placeholder="Example: Voice Commands, Neon Shop, Simple Help">
         <div class="row"><div><label>Layout</label><select id="panelLayout"><option value="compact">Compact command list</option><option value="cards">Command cards</option><option value="minimal">Minimal panel</option></select></div><div><label>Accent</label><input id="panelColor" type="color" value="#5865f2"></div></div>
         <label>Panel title</label><input id="panelTitle" maxlength="120" value="Voice Channel Controls">
         <label>Description</label><textarea id="panelDescription" maxlength="1000">Manage your temporary voice channels with the commands below.</textarea>
@@ -264,7 +266,7 @@ def dashboard_html() -> str:
 /vc transfer &lt;user&gt; | Transfer ownership</textarea>
         <label>Footer</label><input id="panelFooter" maxlength="200" value="AIN Bot • Server controls">
         <label>Thumbnail URL (optional)</label><input id="panelThumbnail" placeholder="https://...">
-        <div class="row"><button onclick="loadPanelDesign()">Load Saved</button><button onclick="savePanelDesign()">Save Design</button><button onclick="sendPanelDesign()">Send Panel</button></div>
+        <div class="row"><button onclick="loadPanelDesign()">Load Selected</button><button onclick="savePanelDesign()">Save Named Design</button><button onclick="sendPanelDesign()">Send Panel</button></div>
         <p class="status" id="panelStatus"></p>
       </div>
       <div class="panel"><h2>Live Discord Preview</h2><div class="discord-preview"><div class="discord-message"><div class="discord-avatar"></div><div><div class="discord-name">AIN Bot <small>BOT · Today</small></div><div class="embed-preview" id="panelPreview"></div></div></div></div><p>Discord controls the outer font and message frame. AIN controls the title, description, fields, arrangement, accent, image, and footer.</p></div>
@@ -351,11 +353,12 @@ async function loadSummary(){
   $('ttsText').maxLength = data.tts_max_length;
   $('ttsCount').parentElement.lastChild.textContent = '/' + data.tts_max_length;
   if(!data.tts_available) setTtsStatus('TTS package missing on the host. Reinstall requirements.txt and redeploy.');
+  await loadPanelProfiles();
   refreshVoiceStatus();
 }
 function panelPayload(){
   localStorage.ainPanelActor=$('panelActorId').value;
-  return {actor_id:$('panelActorId').value,channel_id:$('panelChannel').value,layout:$('panelLayout').value,color:$('panelColor').value,title:$('panelTitle').value,description:$('panelDescription').value,fields:$('panelFields').value,footer:$('panelFooter').value,thumbnail_url:$('panelThumbnail').value};
+  return {actor_id:$('panelActorId').value,name:$('panelName').value,channel_id:$('panelChannel').value,layout:$('panelLayout').value,color:$('panelColor').value,title:$('panelTitle').value,description:$('panelDescription').value,fields:$('panelFields').value,footer:$('panelFooter').value,thumbnail_url:$('panelThumbnail').value};
 }
 function escPanel(value){return String(value||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function renderPanelPreview(){
@@ -364,8 +367,12 @@ function renderPanelPreview(){
   $('panelPreview').style.borderColor=d.color;
   $('panelPreview').innerHTML=`<h3>${escPanel(d.title||'Command Panel')}</h3><p>${escPanel(d.description)}</p><div class="${d.layout==='cards'?'preview-cards':''}">${fields}</div>${d.layout==='minimal'?'':'<div class="preview-footer">'+escPanel(d.footer)+'</div>'}`;
 }
-async function loadPanelDesign(){try{const d=await api('/api/guild/'+guild()+'/panel');Object.entries({panelLayout:d.layout,panelColor:d.color,panelTitle:d.title,panelDescription:d.description,panelFields:d.fields,panelFooter:d.footer,panelThumbnail:d.thumbnail_url}).forEach(([id,v])=>{if(v!==undefined&&v!==null)$(id).value=v});renderPanelPreview();$('panelStatus').textContent='Saved design loaded.'}catch(e){$('panelStatus').textContent=e.message}}
-async function savePanelDesign(){try{await api('/api/guild/'+guild()+'/panel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(panelPayload())});$('panelStatus').textContent='Design saved for this server.';renderPanelPreview()}catch(e){$('panelStatus').textContent=e.message}}
+async function loadPanelProfiles(){if(!guild())return;try{const d=await api('/api/guild/'+guild()+'/panel/profiles');const selected=$('panelProfiles').value;$('panelProfiles').innerHTML='<option value="">New interface</option>'+d.names.map(n=>`<option value="${escPanel(n)}">${escPanel(n)}</option>`).join('');if(d.names.includes(selected))$('panelProfiles').value=selected}catch(e){$('panelStatus').textContent=e.message}}
+function selectPanelProfile(){if($('panelProfiles').value)loadPanelDesign()}
+function newPanelDesign(){$('panelProfiles').value='';$('panelName').value='';$('panelStatus').textContent='New blank name ready. Edit the interface, give it a name, then save.';renderPanelPreview()}
+async function loadPanelDesign(){try{const name=$('panelProfiles').value;const d=await api('/api/guild/'+guild()+'/panel'+(name?'?name='+encodeURIComponent(name):''));$('panelName').value=d.name||name||'';Object.entries({panelLayout:d.layout,panelColor:d.color,panelTitle:d.title,panelDescription:d.description,panelFields:d.fields,panelFooter:d.footer,panelThumbnail:d.thumbnail_url}).forEach(([id,v])=>{if(v!==undefined&&v!==null)$(id).value=v});renderPanelPreview();$('panelStatus').textContent=name?'Interface “'+name+'” loaded.':'Default design loaded.'}catch(e){$('panelStatus').textContent=e.message}}
+async function savePanelDesign(){try{const name=$('panelName').value.trim();if(!name)throw new Error('Give this interface a name first.');await api('/api/guild/'+guild()+'/panel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(panelPayload())});await loadPanelProfiles();$('panelProfiles').value=name;$('panelStatus').textContent='Interface “'+name+'” saved for this server.';renderPanelPreview()}catch(e){$('panelStatus').textContent=e.message}}
+async function deletePanelDesign(){try{const name=$('panelProfiles').value;if(!name)throw new Error('Select a saved interface first.');if(!confirm('Delete “'+name+'”?'))return;await api('/api/guild/'+guild()+'/panel/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor_id:$('panelActorId').value,name})});newPanelDesign();await loadPanelProfiles();$('panelStatus').textContent='Interface deleted.'}catch(e){$('panelStatus').textContent=e.message}}
 async function sendPanelDesign(){try{await api('/api/guild/'+guild()+'/panel/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(panelPayload())});$('panelStatus').textContent='Panel sent to Discord.'}catch(e){$('panelStatus').textContent=e.message}}
 $('panelActorId').value=localStorage.ainPanelActor||'';['panelLayout','panelColor','panelTitle','panelDescription','panelFields','panelFooter','panelThumbnail'].forEach(id=>$(id).addEventListener('input',renderPanelPreview));renderPanelPreview();
 function renderCommands(commands){
@@ -508,6 +515,13 @@ class Dashboard:
             "footer": str(body.get("footer", defaults["footer"])).strip()[:200],
             "thumbnail_url": thumbnail,
         }
+
+    @staticmethod
+    def normalize_panel_name(value: Any) -> str:
+        name = " ".join(str(value or "").strip().split())[:40]
+        if any(character in name for character in "<>\\/\x00"):
+            return ""
+        return name
 
     def make_panel_embed(self, design: dict[str, Any]) -> discord.Embed:
         rows: list[tuple[str, str]] = []
@@ -925,17 +939,51 @@ class Dashboard:
         guild = self.guild_or_404(request.match_info["guild_id"])
         settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
         design = self.panel_defaults()
-        design.update(settings.get("panel_design", {}))
-        return web.json_response(self.normalize_panel(design))
+        name = self.normalize_panel_name(request.query.get("name"))
+        saved = settings.get("panel_designs", {})
+        design.update(saved.get(name, {}) if name else settings.get("panel_design", {}))
+        payload = self.normalize_panel(design)
+        payload["name"] = name
+        return web.json_response(payload)
+
+    async def panel_profiles(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        names = sorted((name for name in settings.get("panel_designs", {}) if self.normalize_panel_name(name)), key=str.lower)
+        return web.json_response({"names": names[:20]})
 
     async def panel_save(self, request: web.Request) -> web.Response:
         self.require_token(request)
         guild = self.guild_or_404(request.match_info["guild_id"])
         body = await request.json()
         actor = self.require_panel_controller(guild, body)
+        name = self.normalize_panel_name(body.get("name"))
+        if not name:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Give this interface a valid name first."}), content_type="application/json")
         design = self.normalize_panel(body)
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        designs = settings.get("panel_designs", {})
+        if name not in designs and len(designs) >= 20:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "This server can save up to 20 interfaces. Delete one before adding another."}), content_type="application/json")
+        designs[name] = design
+        await self.bot.db.set_settings_value(guild.id, "panel_designs", designs, self.bot.settings.default_prefix)
         await self.bot.db.set_settings_value(guild.id, "panel_design", design, self.bot.settings.default_prefix)
-        return web.json_response({"ok": True, "saved_by": str(actor.id), "design": design})
+        return web.json_response({"ok": True, "name": name, "saved_by": str(actor.id), "design": design})
+
+    async def panel_delete(self, request: web.Request) -> web.Response:
+        self.require_token(request)
+        guild = self.guild_or_404(request.match_info["guild_id"])
+        body = await request.json()
+        actor = self.require_panel_controller(guild, body)
+        name = self.normalize_panel_name(body.get("name"))
+        settings = await self.bot.db.get_settings(guild.id, self.bot.settings.default_prefix)
+        designs = settings.get("panel_designs", {})
+        if name not in designs:
+            raise web.HTTPNotFound(text=json.dumps({"error": "That saved interface was not found."}), content_type="application/json")
+        designs.pop(name, None)
+        await self.bot.db.set_settings_value(guild.id, "panel_designs", designs, self.bot.settings.default_prefix)
+        return web.json_response({"ok": True, "deleted": name, "deleted_by": str(actor.id)})
 
     async def panel_send(self, request: web.Request) -> web.Response:
         self.require_token(request)
@@ -1305,7 +1353,9 @@ async def start_dashboard(bot: commands.Bot) -> None:
     app.router.add_get("/api/guild/{guild_id}/voice/status", dashboard.voice_status)
     app.router.add_post("/api/guild/{guild_id}/voice/preview", dashboard.preview_voice)
     app.router.add_get("/api/guild/{guild_id}/panel", dashboard.panel_get)
+    app.router.add_get("/api/guild/{guild_id}/panel/profiles", dashboard.panel_profiles)
     app.router.add_post("/api/guild/{guild_id}/panel", dashboard.panel_save)
+    app.router.add_post("/api/guild/{guild_id}/panel/delete", dashboard.panel_delete)
     app.router.add_post("/api/guild/{guild_id}/panel/send", dashboard.panel_send)
     app.router.add_post("/api/guild/{guild_id}/message", dashboard.send_message)
     app.router.add_post("/api/guild/{guild_id}/embed", dashboard.send_embed)
