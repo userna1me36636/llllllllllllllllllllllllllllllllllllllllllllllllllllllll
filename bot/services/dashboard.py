@@ -86,8 +86,28 @@ def dashboard_html() -> str:
     .embed-preview { border-left:4px solid var(--hot); background:#2b2d31; border-radius:4px; padding:12px 14px; max-width:560px; color:#dbdee1; }
     .embed-preview h3 { color:#f2f3f5; margin:0 0 8px; }.embed-preview p{margin:0 0 10px;color:#dbdee1}.preview-field{margin-top:9px}.preview-field b{display:block;color:#f2f3f5}.preview-field span{white-space:pre-wrap}.preview-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.preview-footer{margin-top:12px;color:#949ba4;font-size:11px}
     button.danger { border-color:rgba(255,79,115,.65); }
+    /* Classic AIN layout: neutral Discord-like shell with a permanent left connection rail. */
+    body { background:#0d0f0e; color:#ecebe7; animation:none; }
+    body::before, body::after { display:none; }
+    .wrap { width:min(1240px,calc(100% - 32px)); display:grid; grid-template-columns:280px minmax(0,1fr); gap:18px; padding:38px 0; border-top:1px solid #343733; }
+    header { display:none; }
+    .tabs { grid-column:2; grid-row:1; flex-wrap:wrap; overflow:visible; gap:4px 8px; margin:0; padding:12px 16px; background:#171916; border:1px solid #353832; border-bottom:0; border-radius:16px 16px 0 0; }
+    .tabs button { border-color:transparent; background:transparent; color:#c9c6bf; box-shadow:none; padding:9px 12px; }
+    .tabs button:hover { background:#242622; border-color:#3b3e37; }
+    .tabs button.active { background:#40271f; border-color:#87513e; color:#fff; }
+    .panel { background:#171916; border-color:#353832; border-radius:16px; box-shadow:0 18px 45px rgba(0,0,0,.24); animation:none; backdrop-filter:none; }
+    .card { background:#1c1e1b; border-color:#383b35; border-radius:14px; box-shadow:none; }
+    input, select, textarea { background:#111310; border-color:#3b3e37; border-radius:10px; }
+    button { background:#282a26; border-color:#3d4039; border-radius:9px; box-shadow:none; }
+    button:hover { border-color:#76513f; background:#302c27; }
+    #dashboardTab.active { display:contents; }
+    #dashboardTab > section { grid-column:1; grid-row:1 / span 3; }
+    #dashboardTab > main { grid-column:2; grid-row:2; border-radius:0 0 16px 16px; }
+    #ttsTab, #panelTab { grid-column:2; grid-row:2; border:1px solid #353832; border-top:0; padding:16px; background:#171916; border-radius:0 0 16px 16px; }
+    .tabpage.active:not(#dashboardTab) { display:grid; }
+    .dashboard-card.filtered-out { display:none; }
     @media (prefers-reduced-motion: reduce) { body, body::before, .panel { animation:none; } }
-    @media (max-width: 820px) { .grid, .tts-layout, .designer { grid-template-columns:1fr; } header { display:block; } .row { flex-wrap:wrap; } .slider-line { grid-template-columns:70px 1fr 46px; } .preview-cards{grid-template-columns:1fr} }
+    @media (max-width: 820px) { .wrap{display:block;width:min(100% - 20px,680px);padding:18px 0}.tabs{border-radius:14px;margin-top:12px;border-bottom:1px solid #353832}#dashboardTab.active{display:grid}#dashboardTab > section,#dashboardTab > main,#ttsTab,#panelTab{display:block;margin-top:12px;border-radius:14px;border:1px solid #353832}.grid, .tts-layout, .designer { grid-template-columns:1fr; } .row { flex-wrap:wrap; } .slider-line { grid-template-columns:70px 1fr 46px; } .preview-cards{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
@@ -101,8 +121,24 @@ def dashboard_html() -> str:
       <button onclick="loadGuilds()">Refresh</button>
     </header>
     <nav class="tabs" aria-label="Dashboard sections">
-      <button class="active" data-tab="dashboardTab" onclick="showTab('dashboardTab',this)">Dashboard</button>
-      <button data-tab="ttsTab" onclick="showTab('ttsTab',this)">Text to Speech</button>
+      <button class="active" data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Overview</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('commands',this)">All Commands</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('security',this)">Defense</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Setup Guide</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Engagement</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Member Transfer</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('economy',this)">Payments</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Promo Codes</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('overview',this)">Giveaways</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('server',this)">Live Channels</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('server',this)">Server Control</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('ai',this)">AI Assistant</button>
+      <button data-tab="ttsTab" onclick="showTab('ttsTab',this)">Voice & TTS</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('music',this)">Music</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('security',this)">Security</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('economy',this)">Economy & Roles</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('server',this)">Members</button>
+      <button data-tab="dashboardTab" onclick="showDashboardView('logs',this)">Logs</button>
       <button data-tab="panelTab" onclick="showTab('panelTab',this)">Panel Designer</button>
     </nav>
     <div id="dashboardTab" class="grid tabpage active">
@@ -146,14 +182,14 @@ def dashboard_html() -> str:
         <h2>Ask What You Need</h2>
         <div class="row"><input id="query" placeholder="example: stop raids, make a jtc, play music, lock vc"><button onclick="search()">Search</button></div>
         <div id="summary" class="card"></div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="ai">
           <h2>Command Assistant</h2>
           <label>Ask about commands</label>
           <textarea id="assistantQuestion" maxlength="900" placeholder="Example: how do I set up anti nuke, make a ticket, or play music?"></textarea>
           <button onclick="askAssistant()">Ask Assistant</button>
           <div id="assistantBox"></div>
         </div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="server">
           <h2>Server Control</h2>
           <div class="row">
             <div><label>Member</label><select id="members"></select></div>
@@ -172,7 +208,7 @@ def dashboard_html() -> str:
             <button onclick="banMember()">Ban</button>
           </div>
         </div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="music">
           <h2>Music Controls</h2>
           <label>Song or URL</label><input id="musicQuery" placeholder="YouTube, playlist, or search">
           <div class="row"><button onclick="music('add')">Add</button><button onclick="music('play')">Play</button><button onclick="music('pause')">Pause</button><button onclick="music('resume')">Resume</button></div>
@@ -180,14 +216,14 @@ def dashboard_html() -> str:
           <label>Volume</label><div class="row"><input id="musicVolume" type="number" min="1" max="200" value="70"><button onclick="music('volume')">Set Volume</button></div>
           <div id="musicBox" class="card"></div>
         </div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="security">
           <h2>Security & Backup</h2>
           <div class="row"><button onclick="backup()">Make Backup Code</button><button onclick="antinuke(true)">Anti-Nuke On</button><button onclick="antinuke(false)">Anti-Nuke Off</button></div>
           <label>Whitelist selected member/role</label>
           <div class="row"><button onclick="antiWhitelist('member')">Whitelist Member</button><button onclick="antiWhitelist('role')">Whitelist Role</button></div>
           <p id="backupBox"></p>
         </div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="economy">
           <h2>Economy & Roles</h2>
           <label>Coins</label><input id="coins" type="number" value="1000">
           <div class="row"><button onclick="coins('add')">Add Coins</button><button onclick="coins('take')">Take Coins</button><button onclick="coins('set')">Set Wallet</button></div>
@@ -202,12 +238,12 @@ def dashboard_html() -> str:
           <label>Role color</label><input id="roleColor" placeholder="#b2182c">
           <div class="row"><button onclick="createRole()">Create Role</button><button onclick="renameRole()">Rename Selected Role</button><button onclick="moveRoleTop()">Move Selected Role Top</button></div>
         </div>
-        <div class="card">
+        <div class="card dashboard-card" data-section="logs">
           <h2>Live Logs</h2>
           <button onclick="loadLogs()">Refresh Logs</button>
           <div id="logsBox"></div>
         </div>
-        <div id="results" class="card"></div>
+        <div id="results" class="card dashboard-card" data-section="commands"></div>
       </main>
     </div>
     <section id="panelTab" class="tabpage designer">
@@ -280,6 +316,11 @@ function guild(){ return $('guilds').value; }
 function setStatus(t){ $('status').textContent = t; }
 function setTtsStatus(t){ $('ttsStatus').textContent = t; }
 function showTab(id, button){ document.querySelectorAll('.tabpage').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active')); $(id).classList.add('active'); button.classList.add('active'); if(id==='ttsTab') refreshVoiceStatus(); if(id==='panelTab') renderPanelPreview(); }
+function showDashboardView(section,button){
+  showTab('dashboardTab',button);
+  document.querySelectorAll('.dashboard-card').forEach(card=>card.classList.toggle('filtered-out',section!=='overview'&&card.dataset.section!==section));
+  if(section==='commands'&&guild()) loadCommands();
+}
 function ttsPayload(){ localStorage.ainTtsActor=$('ttsActorId').value; return {actor_id:$('ttsActorId').value, channel_id:$('ttsVoiceChannels').value, text:$('ttsText').value, voice:$('ttsVoice').value, volume:Number($('ttsVolume').value), speed:Number($('ttsSpeed').value), pitch:Number($('ttsPitch').value)}; }
 async function api(path, opts={}) {
   const sep = path.includes('?') ? '&' : '?';
