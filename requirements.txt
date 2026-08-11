@@ -10,3 +10,4 @@ qrcode[pil]==7.4.2
 humanfriendly==10.0
 python-dateutil==2.9.0.post0
 rapidfuzz==3.9.6
+edge-tts==7.2.3
